@@ -48,3 +48,8 @@ src-tauri/target/
 src-tauri/gen/apple/
 # .ruff_cache
 .ruff_cache/
+
+# iOS (XcodeGen)
+ios/*.xcodeproj/
+ios/**/Info.plist
+ios/build/

@@ -1,0 +1,104 @@
+# XcodeGen spec for the native Carmen iOS app (SwiftUI, no webview).
+#
+#   xcodegen generate        # from ios/ → Carmen.xcodeproj (gitignored, regenerable)
+#
+# Two targets:
+#   Carmen              — the app (SwiftUI + ActivityKit side)
+#   CarmenLiveActivity  — the widget extension that renders the Live Activity
+#                         (lock screen lyrics + Dynamic Island), embedded in the app
+# Shared model code lives in Shared/ and is listed in BOTH targets.
+#
+# No signing is configured here: CI archives with CODE_SIGNING_ALLOWED=NO and
+# local device runs use Xcode's automatic signing once you pick a team.
+
+name: Carmen
+
+options:
+  bundleIdPrefix: com.z44d
+  deploymentTarget:
+    iOS: "18.0"
+  createIntermediateGroups: true
+  groupTopLevelGroups: false
+
+settings:
+  base:
+    MARKETING_VERSION: "1.0.0"     # CFBundleShortVersionString — bump here for releases
+    CURRENT_PROJECT_VERSION: "1"   # CFBundleVersion
+    SWIFT_VERSION: "5.0"           # Swift 5 language mode (works with the Swift 6 toolchain)
+    TARGETED_DEVICE_FAMILY: "1"    # iPhone only, portrait only — matches the Android build
+    SUPPORTS_MACCATALYST: NO
+    ENABLE_USER_SCRIPT_SANDBOXING: YES
+
+targets:
+  Carmen:
+    type: application
+    platform: iOS
+    sources:
+      - path: Carmen
+      - path: Shared
+    dependencies:
+      - target: CarmenLiveActivity
+        embed: true
+    info:
+      path: Carmen/Info.plist
+      properties:
+        CFBundleDisplayName: Carmen
+        CFBundleName: Carmen
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        UILaunchScreen: {}
+        UISupportedInterfaceOrientations:
+          - UIInterfaceOrientationPortrait
+        # Keep playing when the screen locks — also what lets the app keep
+        # feeding the lyric Live Activity while audio runs in the background.
+        UIBackgroundModes:
+          - audio
+        # Live Activities: the lyric card on the Lock Screen / Dynamic Island.
+        NSSupportsLiveActivities: true
+        NSSupportsLiveActivitiesFrequentUpdates: true
+        # ATS: the backend has no client-side auth (all credentials live in the
+        # server's browser.json) and local dev servers are plain http on a LAN
+        # IP, which NSAllowsLocalNetworking does not cover. Same trade-off the
+        # web client makes for http://localhost.
+        NSAppTransportSecurity:
+          NSAllowsArbitraryLoads: true
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.z44d.carmen
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
+        ASSETCATALOG_COMPILER_GLOBAL_ACCENT_COLOR_NAME: AccentColor
+        ENABLE_PREVIEWS: YES
+
+  CarmenLiveActivity:
+    type: app-extension
+    platform: iOS
+    sources:
+      - path: CarmenLiveActivity
+      - path: Shared
+    info:
+      path: CarmenLiveActivity/Info.plist
+      properties:
+        CFBundleDisplayName: Carmen Lyrics
+        CFBundleShortVersionString: $(MARKETING_VERSION)
+        CFBundleVersion: $(CURRENT_PROJECT_VERSION)
+        NSExtension:
+          NSExtensionPointIdentifier: com.apple.widgetkit-extension
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.z44d.carmen.liveactivity
+
+schemes:
+  Carmen:
+    build:
+      targets:
+        Carmen: all
+    run:
+      config: Debug
+    archive:
+      config: Release
+  CarmenLiveActivity:
+    build:
+      targets:
+        CarmenLiveActivity: all
+    run:
+      config: Debug
