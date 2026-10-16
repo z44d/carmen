@@ -14,6 +14,7 @@ Carmen is three cooperating pieces:
 |---|---|---|
 | Desktop / Android shell | `src-tauri/` | Tauri v2 (Rust), identifier `com.z44d.carmen` |
 | App UI | `frontend/` | React 18 + TypeScript + Vite 6 + MUI |
+| Native iOS app | `ios/` | Swift + SwiftUI + ActivityKit (no webview), XcodeGen |
 | Music backend | `server/` | FastAPI wrapping `ytmusicapi` + `yt-dlp` |
 
 ```text
@@ -53,6 +54,7 @@ Carmen is three cooperating pieces:
 | `frontend/src/db/` | SQLite connection (`connection.ts`) + migrations (`migrations.ts`) |
 | `src-tauri/` | Rust shell: `Cargo.toml`, `tauri.conf.json`, `capabilities/default.json`, `src/` (lib, tray, commands), `icons/`, `app-icon.png` |
 | `src-tauri/gen/android/` | Generated Gradle project (`npx tauri android init`) — **not committed yet**, see §9 |
+| `ios/` | Native iOS app (SwiftUI + widget extension): `project.yml` (XcodeGen spec), `Carmen/` (Models · API · State · Views), `CarmenLiveActivity/` (Live Activity UI), `Shared/` (ActivityKit model, compiled into **both** targets). `Carmen.xcodeproj` + `Info.plist`s are generated → gitignored, see §9 |
 | `server/` | FastAPI app: `__main__.py` (app + lifespan), `core.py`, `routes/`, `cache.py`, `sanitizers.py`, `state.py` |
 | `venv/` | Python **3.11** virtualenv (gitignored) |
 | `browser.json` | Live YouTube Music auth cookies — **gitignored, never commit** |
@@ -85,7 +87,10 @@ Carmen is three cooperating pieces:
   WebView2 Runtime (Windows 10 1803+ ships it; the bundle uses the
   download bootstrapper for installers). MSI builds additionally need the
   Windows "VBSCRIPT" optional feature enabled (see Tauri prerequisites).
-- **macOS** — Xcode (or at least the Command Line Tools: `xcode-select --install`).
+- **macOS** — full **Xcode 26+** for the iOS app (§9): the Command Line Tools
+  alone cannot build it, and the iOS 26 SDK is required to compile the
+  (gated) Liquid Glass APIs. Plus XcodeGen (`brew install xcodegen`). The
+  desktop shell only needs the Command Line Tools + the Rust toolchain.
 
 **Android (only for §9)**
 
@@ -340,7 +345,13 @@ npx tauri build               # equivalent, bypasses the npm script
 
 ---
 
-## 9. Android
+## 9. Mobile (Android + iOS)
+
+Android is the Tauri shell on Gradle (§9's Android part); iOS is a
+**separate native Swift app** in `ios/` — no webview, no Rust, built directly
+with Xcode (see "The native iOS app" below).
+
+### Android
 
 **One-time setup** (see §2 for versions):
 
@@ -514,6 +525,39 @@ default" for the app (Settings → Apps → Carmen → Open by default), and may
 ask once ("Open with Carmen") before that. The `?search=` / `?playlist=`
 link shapes resolve the same way.
 
+### The native iOS app (`ios/`)
+
+A pure-Swift SwiftUI app (identifier `com.z44d.carmen`, iPhone-only,
+portrait-only, min iOS 18): Apple Music-style UI with SF Symbols, **Liquid
+Glass on iOS 26+** (every call goes through `ios/Carmen/Views/Glass.swift`,
+which gates `#available(iOS 26.0, *)` and falls back to materials on
+iOS 18–25), and **synced lyrics in a Live Activity** (Lock Screen + Dynamic
+Island) rendered by the `CarmenLiveActivity` widget extension
+(`ActivityConfiguration` UI in `ios/CarmenLiveActivity/`, data model in
+`ios/Shared/` compiled into both targets).
+
+```bash
+cd ios
+xcodegen generate          # (re)generate Carmen.xcodeproj — gitignored, never hand-edit
+open Carmen.xcodeproj      # pick your team under Signing to run on a device
+```
+
+- **Xcode 26+ is required** — not because the app uses iOS 26-only APIs
+  (they're all gated), but because the SDK must *contain* `glassEffect` & co.
+  to compile them. The CI `ios-check` job enforces this with an SDK guard.
+- No signing config lives in `ios/project.yml`: CI archives with
+  `CODE_SIGNING_ALLOWED=NO` (an **unsigned IPA** — sideload tools re-sign),
+  local device runs use Xcode automatic signing once you pick a team.
+- The app talks to the backend directly (`Settings → Server URL`, default
+  `https://api-carmen-v1.syr.qzz.io`, override with e.g.
+  `http://localhost:8000`). Favorites / recents / local playlists / search
+  history are stored on-device (JSON in UserDefaults) — the API is read-only.
+- Lyrics come from `/browsing/track/{id}`; the provider is selectable in
+  Settings (Auto = the backend's chain, same as the web client).
+- Without Xcode, the strongest local check is
+  `swift format lint` (it fully parses every file); the real compile check is
+  the `ios-check` CI job (§10).
+
 ### Portrait-only orientation (mobile builds)
 
 The phone builds never rotate:
@@ -521,21 +565,9 @@ The phone builds never rotate:
 - **Android** — `android:screenOrientation="portrait"` on the main activity
   in `src-tauri/gen/android/app/src/main/AndroidManifest.xml` (committed, so
   CI needs nothing extra).
-- **iOS** — Tauri exposes no config key for it, and `src-tauri/gen/apple/`
-  is regenerated (not committed), so the `UISupportedInterfaceOrientations*`
-  keys in the generated `Info.plist` are forced to portrait-only by the
-  "Lock orientation to portrait" step in `.github/workflows/build.yml`.
-  For a local `tauri ios build`, apply the same patch after
-  `npx tauri ios init --ci`:
-
-  ```bash
-  PLIST="$(find src-tauri/gen/apple -maxdepth 3 -name Info.plist -print -quit)"
-  for KEY in UISupportedInterfaceOrientations "UISupportedInterfaceOrientations~ipad"; do
-    /usr/libexec/PlistBuddy -c "Delete :$KEY" "$PLIST" 2>/dev/null || true
-    /usr/libexec/PlistBuddy -c "Add :$KEY array" "$PLIST"
-    /usr/libexec/PlistBuddy -c "Add :$KEY:0 string UIInterfaceOrientationPortrait" "$PLIST"
-  done
-  ```
+- **iOS** — declared in `ios/project.yml`
+  (`UISupportedInterfaceOrientations` → portrait only) and therefore baked
+  into every generated `Info.plist`; no CI patch step is needed.
 
 ---
 
@@ -552,6 +584,8 @@ consolidates what used to be three files (`ci.yml`, `build-desktop.yml`,
 | `server` | ″ | Fresh Py3.11 venv → `pip install -r server/requirements.txt` → `python -m compileall server` → `import server.__main__`. **Never starts the server** — the import is safe because `YTMusic`/Redis/browser.json are all created inside the FastAPI `lifespan`, which a plain import never runs |
 | `desktop` (matrix) | tags `v*` + `workflow_dispatch`, needs all 3 checks | 4 entries: **macOS universal dmg** (`macos-latest`), **Linux deb + rpm + AppImage** (`ubuntu-latest`; the `rpm` apt package provides `rpmbuild`), **Windows x86_64 NSIS** + **Windows aarch64 NSIS** (`windows-latest`, native MSVC — VS2022 ships the ARM64 cross tools; `cargo-xwin` was dropped because its clang-cl `/imsvc` flags break ring's C build). Each entry: Node 20 + Rust stable + rust-cache → `npm ci` (both lockfiles) → `npm run icons` → `npx tauri build --ci --bundles …` |
 | `android` | tags `v*` + `workflow_dispatch`, needs all 3 checks | Ubuntu + Temurin JDK 17 + the **preinstalled** Android SDK (a pinned NDK is installed via the runner's own `sdkmanager` — `android-actions/setup-android@v3` was dropped after it broke on cmdline-tools 16 by trying to install the removed `tools` package) + Rust Android targets: builds the committed `src-tauri/gen/android`, decodes the keystore + writes `keystore.properties` **when secrets exist** (otherwise builds unsigned), runs `npx tauri android build --ci --apk --aab` |
+| `ios-check` | push to `master`, PRs, tags `v*`, `workflow_dispatch` | Compile check for the **native iOS app**: macOS + `maxim-lobanov/setup-xcode@v1` (`latest-stable`) → iOS SDK **≥ 26 guard** (the gated Liquid Glass symbols must exist in the SDK) → `xcodegen generate` → `xcodebuild build` for `generic/platform=iOS Simulator` with `CODE_SIGNING_ALLOWED=NO`. The `Carmen` scheme builds the app **and** the embedded `CarmenLiveActivity` widget extension, so every Swift file is compiled |
+| `ios` | tags `v*` + `workflow_dispatch`, needs all 4 checks | Same Xcode setup + guard + `xcodegen generate`, then an unsigned Release **archive** (`generic/platform=iOS`, `CODE_SIGNING_ALLOWED=NO`) → the `.app` is copied into `Payload/` and zipped to `ios/build/Carmen.ipa` by hand (no `-exportArchive`, which would demand signing settings) → attached to the release. Pure Xcode — no Node, Rust or Tauri involved |
 
 Release uploads happen **inside each build job** via
 `softprops/action-gh-release@v2` — deliberately **no
@@ -570,9 +604,11 @@ bash` everywhere (PowerShell is the default shell on `windows-latest` and
 breaks bash snippets), pinned major action versions (`checkout@v4`,
 `setup-node@v4`, `setup-java@v4`, `setup-python@v5`,
 `dtolnay/rust-toolchain@stable`, `Swatinem/rust-cache@v2`,
+`maxim-lobanov/setup-xcode@v1`,
 `softprops/action-gh-release@v2`), a `concurrency` group per workflow/ref
 that cancels superseded runs, and `permissions: contents: write` **only** on
-the two build jobs — everything else is `contents: read`.
+the three bundle jobs (`desktop`, `android`, `ios`) — everything else is
+`contents: read`.
 
 Both lockfiles (`package-lock.json` + `frontend/package-lock.json`) are
 tracked, so every CI install is strict `npm ci`.
@@ -580,8 +616,10 @@ tracked, so every CI install is strict `npm ci`.
 **Release flow**: bump versions (`package.json` + `src-tauri/tauri.conf.json`
 + `Cargo.toml`) → commit → `git tag v1.2.0 && git push origin v1.2.0` →
 checks run, then the builds → the GitHub Release is created/updated with the
-desktop bundles (dmg, NSIS exe ×2, deb, rpm, AppImage) and the Android
-APK/AAB, and `deploy.yml` republishes the web client to the `pages` branch
+desktop bundles (dmg, NSIS exe ×2, deb, rpm, AppImage), the Android
+APK/AAB and the unsigned iOS IPA (`ios/build/Carmen.ipa`, whose version comes
+from `MARKETING_VERSION` in `ios/project.yml`),
+and `deploy.yml` republishes the web client to the `pages` branch
 (GitHub Pages production). If a tag build already ran, delete the tag (and
 its release) before re-pushing it:
 `git push origin :refs/tags/v1.2.0 && git tag -d v1.2.0`.

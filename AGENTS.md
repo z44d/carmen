@@ -1,7 +1,7 @@
 # AGENTS.md
 
 ## Project overview
-FastAPI backend (`server/`) wrapping `ytmusicapi` to expose YouTube Music endpoints (browsing, search, watch, playlists, podcasts). There is **no TS app and no `index.ts`** — ignore any leftover `bun run index.ts` references. npm is the JS tooling (two lockfiles: root + `frontend/`); server-side stream-signature decryption runs through yt-dlp, which the server configures to use **Deno** (`js_runtimes` in `server/core.py`).
+FastAPI backend (`server/`) wrapping `ytmusicapi` to expose YouTube Music endpoints (browsing, search, watch, playlists, podcasts). There is **no TS app and no `index.ts`** — ignore any leftover `bun run index.ts` references. npm is the JS tooling (two lockfiles: root + `frontend/`); server-side stream-signature decryption runs through yt-dlp, which the server configures to use **Deno** (`js_runtimes` in `server/core.py`). The iOS app (`ios/`) is a **native Swift/SwiftUI app** (no webview, no Tauri) with its own XcodeGen project — see below.
 
 ## Run the server
 ```bash
@@ -20,10 +20,18 @@ FastAPI backend (`server/`) wrapping `ytmusicapi` to expose YouTube Music endpoi
   - `@cached` (`cache.py`) JSON-caches results in Redis under `yt:{prefix}:{sha256}` and silently falls back to uncached on Redis errors.
 - New routes must follow the pattern: a `partial` of the sync core function run through the executor, decorated `@sanitized` above `@cached`.
 
+## iOS app (`ios/`)
+- Two XcodeGen targets from `ios/project.yml`: `Carmen` (app) + `CarmenLiveActivity` (widget extension for the lyric Live Activity). `Shared/` sources compile into both. `Carmen.xcodeproj` and the `Info.plist`s are **generated — never hand-edit**; regenerate with `cd ios && xcodegen generate`.
+- Min iOS 18; every iOS 26 / Liquid Glass API is gated with `#available(iOS 26.0, *)` — use the wrappers in `ios/Carmen/Views/Glass.swift`, never call `.glassEffect` directly (and never `.clipped()` on a glass surface).
+- `Player` / `SettingsStore.shared` / `LibraryStore.shared` are the single sources of truth (`@MainActor @Observable`); views read them from the environment. The API base URL defaults to `https://api-carmen-v1.syr.qzz.io` and is overridable in-app.
+- Playback uses `/stream?vidId=` directly through `AVPlayer` (Range-capable proxy); the app never needs stream URLs in JSON. Library data (favorites/recents/local playlists) is on-device only — the API is read-only.
+- No signing in `project.yml`: CI builds unsigned (`CODE_SIGNING_ALLOWED=NO`); a sideload tool re-signs the IPA. Release version = `MARKETING_VERSION` in `ios/project.yml`.
+- There is **no Xcode on this machine** (CommandLineTools only): you cannot compile Swift locally. Verify with `swift format lint` (full parse), then rely on the `ios-check` job in `.github/workflows/build.yml` — it requires the iOS 26 SDK (Xcode 26+), enforced by an SDK guard.
+
 ## Gotchas
 - `browser.json` contains real auth cookies / SAPISID tokens — gitignored, never commit. `test.py` and `STUFF.md` hold the same credentials and scratch notes (cookie conversion, yt-dlp commands).
 - **Deno** must be on the server's PATH: yt-dlp decrypts stream-URL signatures through a JS runtime and `server/core.py` selects `deno` (`js_runtimes`) — without it, `/stream` cannot resolve URLs.
 - "Taste profile" and library-scoped endpoints require the authenticated cookies in `browser.json`.
-- No test suite, no CI, no pinned linter config (ruff has been run ad hoc — `.ruff_cache` exists but no config file). Verify changes by running the server, not via JS/TS tooling.
+- No test suite and no pinned linter config (ruff has been run ad hoc — `.ruff_cache` exists but no config file). CI (`.github/workflows/build.yml`) = compile/build checks (`frontend`, `rust`, `server`, `ios-check`) + release bundles on tags (desktop, Android APK/AAB, unsigned iOS IPA). Verify server changes by running the server, not via JS/TS tooling.
 - The installed venv can lag `requirements.txt` (e.g. `yt-dlp` is in requirements but not yet installed in `venv/`).
 - Commit style follows conventional commits: `feat(core): …`, `feat(sanitizers): …` (see git log).

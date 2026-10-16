@@ -2,7 +2,8 @@ name: Build and Release
 
 # Single consolidated workflow — replaces ci.yml + build-desktop.yml +
 # build-android.yml. Layout (mirrors the proven z44d/serbase build.yml):
-#   * checks (frontend / rust / server) run on pushes + PRs;
+#   * checks (frontend / rust / server / iOS) run on pushes + PRs;
+#     the iOS check is a native Xcode compile of ios/ (simulator), not Tauri;
 #   * the desktop matrix, the Android job and the iOS job run for version tags
 #     (and for manual workflow_dispatch, so Windows/Android/iOS steps can be
 #     smoke-tested without tagging) and need all checks to be green first;
@@ -413,93 +414,117 @@ jobs:
           fail_on_unmatched_files: true
           body_path: ${{ runner.temp }}/release-body.md
 
-  # ─────────────────────────── iOS IPA (unsigned) ───────────────────────────
+  # ───────────────────────── iOS check (native Swift app) ─────────────────────────
+  ios-check:
+    name: iOS compile check (simulator)
+    # Runs on every push/PR like the other checks — the Swift app has no JS/Rust
+    # to verify, just xcodegen + xcodebuild against the iOS Simulator SDK.
+    runs-on: macos-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: maxim-lobanov/setup-xcode@v1
+        with:
+          xcode-version: latest-stable
+
+      - name: Guard the iOS SDK
+        # Every iOS 26 API in the app is gated with #available(iOS 26.0, *), but
+        # the symbols still have to EXIST in the SDK to compile. Without this
+        # guard an older runner image fails with cryptic "cannot find
+        # glassEffect in scope" errors instead of a clear message.
+        run: |
+          SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          major="${SDK%%.*}"
+          echo "iOS Simulator SDK: $SDK"
+          if [ "${major:-0}" -lt 26 ]; then
+            echo "::error::iOS SDK $SDK is older than 26 — the Liquid Glass build needs Xcode 26+."
+            exit 1
+          fi
+
+      - name: Install XcodeGen
+        run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Generate the Xcode project (ios/project.yml)
+        run: xcodegen generate
+        working-directory: ios
+
+      - name: Build for the iOS Simulator
+        # The Carmen scheme builds the app AND the embedded CarmenLiveActivity
+        # widget extension, so this compiles every Swift file in ios/ (Shared/
+        # sources belong to both targets). Unsigned — the runner has no team.
+        run: |
+          xcodebuild build \
+            -project Carmen.xcodeproj \
+            -scheme Carmen \
+            -configuration Debug \
+            -destination 'generic/platform=iOS Simulator' \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet \
+            build
+        working-directory: ios
+
+  # ──────────────────── iOS IPA, native Swift (unsigned) ────────────────────
   ios:
     name: iOS release (unsigned IPA)
     # Same gating as the other bundle jobs: tags → build + attach; manual
-    # workflow_dispatch → build only. macOS runner because the iOS toolchain
-    # (Xcode + xcodebuild) only exists there.
+    # workflow_dispatch → build only. Native Xcode build of ios/ (SwiftUI +
+    # ActivityKit) — no Tauri/Rust/Node involved. macOS runner because the iOS
+    # toolchain only exists there.
     if: github.ref_type == 'tag' || github.event_name == 'workflow_dispatch'
-    needs: [frontend, rust, server]
+    needs: [frontend, rust, server, ios-check]
     runs-on: macos-latest
-    timeout-minutes: 90
+    timeout-minutes: 60
     permissions:
       contents: write # attach the IPA to the GitHub release
     steps:
       - uses: actions/checkout@v4
 
-      - uses: actions/setup-node@v4
+      - uses: maxim-lobanov/setup-xcode@v1
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            frontend/package-lock.json
+          xcode-version: latest-stable
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-ios # iphoneos device slice — the only one an IPA needs
-
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          shared-key: ios
-
-      - name: Install JS deps (root = Tauri CLI, frontend = vite build)
+      - name: Guard the iOS SDK
+        # Same guard as ios-check (the two jobs share an Xcode image, but each
+        # guards itself so a rerun alone still fails with a clear message).
         run: |
-          npm ci
-          npm --prefix frontend ci
-
-      - name: Install XcodeGen
-        # `tauri ios init` shells out to `xcodegen generate`; the macOS runners
-        # do not ship it. (init would `brew install` it itself, but doing it up
-        # front keeps the init step fast and its logs clean.)
-        run: |
-          if ! command -v xcodegen >/dev/null 2>&1; then
-            brew install xcodegen
-          fi
-
-      - name: Generate src-tauri/gen/apple (tauri ios init)
-        # gen/apple is intentionally NOT committed (unlike gen/android) — it is
-        # regenerated here and then reused by `tauri ios build`. --ci skips
-        # every prompt; the project is generated even without a development
-        # team because we never sign.
-        run: |
-          if [ ! -d src-tauri/gen/apple ]; then
-            npx tauri ios init --ci
-          fi
-
-      - name: Generate icons (fills gen/apple/Assets.xcassets)
-        # MUST run after init: `tauri icon` only writes the iOS AppIcon set
-        # when gen/apple/Assets.xcassets/AppIcon.appiconset already exists.
-        run: npm run icons
-
-      - name: Lock orientation to portrait (Info.plist)
-        # Phone builds never rotate, matching android:screenOrientation in the
-        # (committed) AndroidManifest. gen/apple is regenerated by the init
-        # step above and is not committed, so the key is forced here — Tauri
-        # exposes no config key for it (see DEVELOPMENT.md for the local
-        # equivalent).
-        run: |
-          PLIST="$(find src-tauri/gen/apple -maxdepth 3 -name Info.plist -print -quit)"
-          if [ -z "$PLIST" ]; then
-            echo "::error::gen/apple Info.plist not found after tauri ios init"
+          SDK="$(xcrun --sdk iphonesimulator --show-sdk-version)"
+          major="${SDK%%.*}"
+          echo "iOS Simulator SDK: $SDK"
+          if [ "${major:-0}" -lt 26 ]; then
+            echo "::error::iOS SDK $SDK is older than 26 — the Liquid Glass build needs Xcode 26+."
             exit 1
           fi
-          for KEY in UISupportedInterfaceOrientations "UISupportedInterfaceOrientations~ipad"; do
-            /usr/libexec/PlistBuddy -c "Delete :$KEY" "$PLIST" 2>/dev/null || true
-            /usr/libexec/PlistBuddy -c "Add :$KEY array" "$PLIST"
-            /usr/libexec/PlistBuddy -c "Add :$KEY:0 string UIInterfaceOrientationPortrait" "$PLIST"
-          done
-          echo "Portrait-only orientation set in $PLIST"
 
-      - name: Build unsigned IPA (tauri ios build --no-sign)
-        # --no-sign skips code signing entirely: xcodebuild archives with
-        # CODE_SIGNING_ALLOWED=NO and Tauri then zips the .app into a Payload/
-        # IPA itself (no certificate or provisioning profile required).
-        # Release is the default profile and the default `--target aarch64`
-        # builds the device slice; output: src-tauri/gen/apple/build/arm64/*.ipa
-        run: npx tauri ios build --ci --no-sign
+      - name: Install XcodeGen
+        run: command -v xcodegen >/dev/null 2>&1 || brew install xcodegen
+
+      - name: Generate the Xcode project (ios/project.yml)
+        run: xcodegen generate
+        working-directory: ios
+
+      - name: Archive + package unsigned IPA
+        # CODE_SIGNING_ALLOWED=NO archives without a certificate or
+        # provisioning profile; a sideloading tool (AltStore, SideStore, …)
+        # re-signs on install, which is why an unsigned IPA is the shippable
+        # artifact. The result is zipped into the Payload/ layout by hand —
+        # plain `xcodebuild -exportArchive` would demand signing settings.
+        run: |
+          set -euo pipefail
+          xcodebuild archive \
+            -project Carmen.xcodeproj \
+            -scheme Carmen \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -archivePath build/Carmen.xcarchive \
+            CODE_SIGNING_ALLOWED=NO \
+            -quiet \
+            archive
+          mkdir -p build/Payload
+          cp -R build/Carmen.xcarchive/Products/Applications/Carmen.app build/Payload/
+          (cd build && zip -qry Carmen.ipa Payload)
+          ls -la build/Carmen.ipa
+        working-directory: ios
 
       - name: Compose release body (Downloads table + .github/RELEASE_NOTES.md)
         if: github.ref_type == 'tag'
@@ -511,6 +536,6 @@ jobs:
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
-          files: src-tauri/gen/apple/build/arm64/*.ipa
+          files: ios/build/Carmen.ipa
           fail_on_unmatched_files: true
           body_path: ${{ runner.temp }}/release-body.md
