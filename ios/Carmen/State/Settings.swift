@@ -29,6 +29,51 @@ enum LyricsProvider: String, CaseIterable, Identifiable, Sendable {
     }
 }
 
+/// Accent color choices — the same Material palette the web client ships in
+/// `frontend/src/theme.ts`, defaulting to Material Green (#4CAF50).
+enum AccentOption: String, CaseIterable, Identifiable, Sendable {
+    case green, emerald, teal, lime, cyan, blue, indigo, purple, pink, red, orange, amber, white
+
+    var id: String { rawValue }
+
+    var name: String {
+        switch self {
+        case .green: return "Green"
+        case .emerald: return "Emerald"
+        case .teal: return "Teal"
+        case .lime: return "Lime"
+        case .cyan: return "Cyan"
+        case .blue: return "Blue"
+        case .indigo: return "Indigo"
+        case .purple: return "Purple"
+        case .pink: return "Pink"
+        case .red: return "Red"
+        case .orange: return "Orange"
+        case .amber: return "Amber"
+        case .white: return "White"
+        }
+    }
+
+    /// Hex value identical to the web palette so both clients theme alike.
+    var hex: String {
+        switch self {
+        case .green: return "#4CAF50"
+        case .emerald: return "#10B981"
+        case .teal: return "#009688"
+        case .lime: return "#8BC34A"
+        case .cyan: return "#00BCD4"
+        case .blue: return "#2196F3"
+        case .indigo: return "#3F51B5"
+        case .purple: return "#9C27B0"
+        case .pink: return "#E91E63"
+        case .red: return "#F44336"
+        case .orange: return "#FF5722"
+        case .amber: return "#FF9800"
+        case .white: return "#ffffff"
+        }
+    }
+}
+
 @MainActor
 @Observable
 final class SettingsStore {
@@ -42,6 +87,7 @@ final class SettingsStore {
         static let apiBase = "settings.apiBase"
         static let lyricsProvider = "settings.lyricsProvider"
         static let liveActivities = "settings.liveActivities"
+        static let accent = "settings.accent"
     }
 
     @ObservationIgnored private let defaults: UserDefaults = .standard
@@ -49,6 +95,7 @@ final class SettingsStore {
     private var _apiBase: String
     private var _lyricsProviderRaw: String
     private var _liveActivitiesEnabled: Bool
+    private var _accentRaw: String
 
     /// Server URL without a trailing slash; empty string means "use the default".
     var apiBase: String {
@@ -76,10 +123,20 @@ final class SettingsStore {
         }
     }
 
+    /// The user-chosen accent color (theme). Drives the whole app's tint.
+    var accent: AccentOption {
+        get { AccentOption(rawValue: _accentRaw) ?? .green }
+        set {
+            _accentRaw = newValue.rawValue
+            defaults.set(newValue.rawValue, forKey: Key.accent)
+        }
+    }
+
     init() {
         _apiBase = defaults.string(forKey: Key.apiBase) ?? ""
         _lyricsProviderRaw = defaults.string(forKey: Key.lyricsProvider) ?? LyricsProvider.auto.rawValue
         _liveActivitiesEnabled = defaults.object(forKey: Key.liveActivities) as? Bool ?? true
+        _accentRaw = defaults.string(forKey: Key.accent) ?? AccentOption.green.rawValue
     }
 
     /// Effective base URL (trimmed, default fallback) — build a client with it.

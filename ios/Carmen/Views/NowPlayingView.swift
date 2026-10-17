@@ -1,28 +1,60 @@
 //
 //  NowPlayingView.swift
-//  Carmen — the full-screen player: artwork (or lyrics), scrubber, transport,
-//  and the queue sheet. Styled after Apple Music; the control clusters use
-//  Liquid Glass on iOS 26 (via the Glass.swift wrappers).
+//  Carmen — the full player.
+//
+//  Mounted by RootView as an overlay that slides up from the mini bar
+//  (`Player.expansion` drives the offset; dragging the header tracks the
+//  finger back down). Inside: adaptive artwork (motion video when the track
+//  has any, growing with the sheet), metadata with a favorite heart, the
+//  scrubber, transport with shuffle/repeat, and the Lyrics / Queue /
+//  Related action pill that swaps the content area for a panel with a
+//  compact card above it — the web client's panel takeover. Liquid Glass via
+//  the Glass.swift wrappers; the player is always a dark surface, so the
+//  content is evaluated as dark regardless of system appearance.
 //
 
 import SwiftUI
 
+private enum PlayerPanel: String, CaseIterable, Identifiable {
+    case lyrics, queue, related
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .lyrics: return "Lyrics"
+        case .queue: return "Queue"
+        case .related: return "Related"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .lyrics: return "text.quote"
+        case .queue: return "list.bullet"
+        case .related: return "sparkles"
+        }
+    }
+}
+
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
-    @Environment(\.dismiss) private var dismiss
 
-    @State private var showQueue = false
-    @State private var showLyrics = false
+    @State private var activePanel: PlayerPanel?
     @State private var scrubTime: Double = 0
     @State private var isScrubbing = false
+
+    /// Drag travel mapped onto a full expansion — must match RootView's
+    /// 1000pt offset travel so the sheet tracks the finger 1:1.
+    private static let dragRange: CGFloat = 1000
 
     var body: some View {
         Group {
             if let track = player.current {
                 content(for: track)
             } else {
-                // Queue was cleared while the player was open.
-                Color.clear.onAppear { dismiss() }
+                // Queue was cleared while the player was open (stop closes it).
+                Color.clear
             }
         }
     }
@@ -34,84 +66,141 @@ struct NowPlayingView: View {
             NowPlayingBackground(track: track)
 
             VStack(spacing: 0) {
-                grabber
-                artworkArea(for: track)
-                metadata(for: track)
-                scrubber
-                transport
-                bottomBar
-                    .padding(.top, 8)
-                Spacer(minLength: 12)
+                header
+
+                if let panel = activePanel {
+                    compactCard(for: track)
+                    panelBody(panel)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity.combined(with: .move(edge: .bottom)))
+                } else {
+                    playerBody(for: track)
+                        .frame(maxWidth: .infinity, maxHeight: .infinity)
+                        .transition(.opacity)
+                }
+
+                actionBar(for: track)
             }
-            .padding(.horizontal, 24)
         }
-        .sheet(isPresented: $showQueue) {
-            QueueView()
-                .presentationDetents([.medium, .large])
-                .presentationDragIndicator(.visible)
-        }
+        .environment(\.colorScheme, .dark)  // the backdrop is always dark
+        .animation(.spring(response: 0.35, dampingFraction: 0.85), value: activePanel)
     }
 
-    /// Swipe-down/tap grabber that closes the player.
-    private var grabber: some View {
-        Capsule()
-            .fill(.secondary.opacity(0.5))
-            .frame(width: 36, height: 5)
-            .padding(.top, 10)
-            .padding(.bottom, 18)
-            .contentShape(Rectangle())
-            .onTapGesture { dismiss() }
-            .gesture(
-                DragGesture(minimumDistance: 10)
-                    .onEnded { value in
-                        if value.translation.height > 50 { dismiss() }
+    private func playerBody(for track: Track) -> some View {
+        VStack(spacing: 0) {
+            artworkArea(for: track)
+            metadata(for: track)
+            scrubber
+            transport
+            Spacer(minLength: 8)
+        }
+        .padding(.horizontal, 24)
+    }
+
+    /// Grabber + eyebrow row — also the drag zone that collapses the player.
+    private var header: some View {
+        VStack(spacing: 6) {
+            Capsule()
+                .fill(.secondary.opacity(0.5))
+                .frame(width: 36, height: 5)
+            HStack {
+                Button {
+                    player.closePlayer()
+                } label: {
+                    Image(systemName: "chevron.down")
+                        .font(.subheadline.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Close Player")
+
+                Spacer()
+                Text("NOW PLAYING")
+                    .font(.caption2.weight(.semibold))
+                    .tracking(1.2)
+                    .foregroundStyle(.secondary)
+                Spacer()
+
+                Color.clear.frame(width: 32, height: 32)
+            }
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 8)
+        .padding(.bottom, 10)
+        .contentShape(Rectangle())
+        .gesture(
+            DragGesture(minimumDistance: 10)
+                .onChanged { value in
+                    // Track the finger — RootView's offset reads this live.
+                    let progress = 1 - value.translation.height / Self.dragRange
+                    player.expansion = max(0, min(1, progress))
+                }
+                .onEnded { value in
+                    if value.translation.height > 120 || value.predictedEndTranslation.height > 400 {
+                        player.closePlayer()
+                    } else {
+                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                            player.expansion = 1
+                        }
                     }
-            )
+                }
+        )
     }
 
-    /// Artwork by default; the synced-lyrics panel takes its place on toggle.
+    /// Motion video when the track has it, the static cover otherwise — both
+    /// growing with the sheet so the player feels like it left the mini bar.
     @ViewBuilder
     private func artworkArea(for track: Track) -> some View {
-        ZStack {
-            ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 12)
-                .aspectRatio(1, contentMode: .fit)
-                .shadow(color: .black.opacity(0.35), radius: 20, y: 10)
-
-            if showLyrics {
-                LyricsView()
-                    .background(.ultraThinMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
-                    .transition(.opacity.combined(with: .scale(scale: 0.96)))
+        let expansion = player.expansion
+        Group {
+            if let motionURL = player.motionArtworkURL {
+                MotionArtworkView(
+                    urlString: motionURL,
+                    artworkID: "carmen.\(track.album?.id ?? track.videoId)"
+                )
+            } else {
+                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 12)
             }
         }
-        .frame(maxWidth: .infinity)
         .aspectRatio(1, contentMode: .fit)
-        .padding(.bottom, 24)
-        .animation(.easeInOut(duration: 0.25), value: showLyrics)
+        .frame(maxWidth: .infinity)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .shadow(color: .black.opacity(0.35), radius: 22, y: 12)
+        .scaleEffect(0.5 + 0.5 * expansion)
+        .opacity(0.35 + 0.65 * expansion)
+        .frame(maxHeight: 420)
+        .padding(.bottom, 20)
     }
 
     private func metadata(for track: Track) -> some View {
         HStack(alignment: .center, spacing: 12) {
             VStack(alignment: .leading, spacing: 3) {
-                Text(track.title)
-                    .font(.title3.weight(.semibold))
-                    .lineLimit(1)
-                    .foregroundStyle(.white)
-                Text(track.artistLine)
-                    .font(.subheadline)
-                    .lineLimit(1)
-                    .foregroundStyle(.white.opacity(0.7))
-            }
-            Spacer(minLength: 8)
-            if !showLyrics {
-                // Peek the first line next to the title when lyrics exist.
-                if let next = player.lyrics?.displayLine(atMs: Int(player.currentTime * 1000)) {
-                    Text(next.text)
-                        .font(.footnote)
-                        .foregroundStyle(.white.opacity(0.55))
+                HStack(spacing: 5) {
+                    Text(track.title)
+                        .font(.title3.weight(.semibold))
                         .lineLimit(1)
-                        .frame(maxWidth: 90, alignment: .trailing)
+                        .foregroundStyle(.primary)
+                    if track.isExplicit { ExplicitBadge() }
+                }
+                HStack(spacing: 4) {
+                    Text(track.artistLine)
+                        .font(.subheadline)
+                        .lineLimit(1)
+                        .foregroundStyle(.secondary)
+                    if !track.albumName.isEmpty {
+                        Text("·")
+                            .foregroundStyle(.secondary)
+                        Text(track.albumName)
+                            .font(.subheadline)
+                            .lineLimit(1)
+                            .foregroundStyle(.secondary.opacity(0.8))
+                    }
                 }
             }
+            Spacer(minLength: 8)
+            FavoriteButton(track: track)
         }
         .padding(.bottom, 14)
     }
@@ -133,24 +222,38 @@ struct NowPlayingView: View {
             HStack {
                 Text(formatClock(isScrubbing ? scrubTime : player.currentTime))
                 Spacer()
-                Text("-" + formatClock(max(player.duration - (isScrubbing ? scrubTime : player.currentTime), 0)))
+                Text(
+                    "-" + formatClock(
+                        max(player.duration - (isScrubbing ? scrubTime : player.currentTime), 0)
+                    )
+                )
             }
             .font(.caption.monospacedDigit())
-            .foregroundStyle(.white.opacity(0.6))
+            .foregroundStyle(.secondary)
         }
         .padding(.bottom, 18)
     }
 
+    /// shuffle · previous · play · next · repeat — Apple Music's order.
     private var transport: some View {
-        HStack(spacing: 44) {
+        HStack(spacing: 0) {
+            Button {
+                player.shuffle.toggle()
+            } label: {
+                Image(systemName: "shuffle")
+                    .font(.title3)
+                    .foregroundStyle(player.shuffle ? Color.carmen : .secondary)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
+
             Button {
                 player.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .contentShape(Rectangle())
+                    .font(.system(size: 28))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)
             .opacity(player.hasPrevious ? 1 : 0.35)
@@ -160,19 +263,19 @@ struct NowPlayingView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(.white.opacity(0.14))
+                        .fill(.primary.opacity(0.12))
                     if player.isBuffering {
                         ProgressView()
-                            .tint(.white)
                             .controlSize(.large)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 30))
-                            .foregroundStyle(.white)
+                            .font(.system(size: 28))
+                            .foregroundStyle(.primary)
                             .offset(x: player.isPlaying ? 0 : 2)  // optical centering
                     }
                 }
-                .frame(width: 68, height: 68)
+                .frame(width: 64, height: 64)
+                .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)
 
@@ -180,68 +283,112 @@ struct NowPlayingView: View {
                 player.next()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 30))
-                    .foregroundStyle(.white)
-                    .frame(width: 56, height: 56)
-                    .contentShape(Rectangle())
+                    .font(.system(size: 28))
+                    .foregroundStyle(.primary)
+                    .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)
             .opacity(player.hasNext ? 1 : 0.35)
+
+            Button {
+                switch player.repeatMode {
+                case .off: player.repeatMode = .all
+                case .all: player.repeatMode = .one
+                case .one: player.repeatMode = .off
+                }
+            } label: {
+                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
+                    .font(.title3)
+                    .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.carmen)
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.plain)
         }
-        .padding(.bottom, 22)
+        .padding(.bottom, 14)
     }
 
-    private var bottomBar: some View {
+    // MARK: Panels
+
+    /// The glass pill: Lyrics / Queue / Related cells + the download control.
+    /// Tapping the active cell returns to the artwork view (frontend parity).
+    private func actionBar(for track: Track) -> some View {
         HStack(spacing: 0) {
-            // Lyrics toggle
-            Button {
-                withAnimation { showLyrics.toggle() }
-            } label: {
-                Image(systemName: showLyrics ? "quote.opening.inverted" : "quote.opening")
-                    .font(.title3)
-                    .foregroundStyle(showLyrics ? Color.accentColor : .white)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(.plain)
-            .disabled(player.lyrics == nil && !player.lyricsLoading)
-
-            // Shuffle + repeat live in the middle on iOS; Apple Music keeps
-            // AirPlay here — we surface shuffle/repeat, which this app owns.
-            HStack(spacing: 28) {
+            ForEach(PlayerPanel.allCases) { panel in
                 Button {
-                    player.shuffle.toggle()
-                } label: {
-                    Image(systemName: "shuffle")
-                        .font(.title3)
-                        .foregroundStyle(player.shuffle ? Color.accentColor : .white.opacity(0.8))
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    switch player.repeatMode {
-                    case .off: player.repeatMode = .all
-                    case .all: player.repeatMode = .one
-                    case .one: player.repeatMode = .off
+                    withAnimation {
+                        activePanel = activePanel == panel ? nil : panel
                     }
                 } label: {
-                    Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                        .font(.title3)
-                        .foregroundStyle(player.repeatMode == .off ? .white.opacity(0.8) : Color.accentColor)
+                    VStack(spacing: 2) {
+                        Image(systemName: panel.symbol)
+                            .font(.footnote)
+                        Text(panel.title)
+                            .font(.system(size: 10, weight: .medium))
+                    }
+                    .foregroundStyle(activePanel == panel ? Color.carmen : Color.secondary)
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 8)
+                    .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
             }
-            .frame(maxWidth: .infinity)
 
-            // Queue
+            DownloadButton(track: track, diameter: 20)
+                .frame(maxWidth: .infinity)
+                .padding(.vertical, 8)
+        }
+        .glassCapsule()
+        .padding(.horizontal, 20)
+        .padding(.bottom, 6)
+    }
+
+    /// Compact now-playing card above an open panel (the takeover header).
+    private func compactCard(for track: Track) -> some View {
+        HStack(spacing: 12) {
+            ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 6)
+                .frame(width: 44, height: 44)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(track.title)
+                    .font(.subheadline.weight(.semibold))
+                    .lineLimit(1)
+                    .foregroundStyle(.primary)
+                Text(track.artistLine)
+                    .font(.caption)
+                    .lineLimit(1)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 8)
+            FavoriteButton(track: track)
             Button {
-                showQueue = true
+                withAnimation { activePanel = nil }
             } label: {
-                Image(systemName: "list.bullet")
-                    .font(.title3)
-                    .foregroundStyle(.white)
-                    .frame(maxWidth: .infinity)
+                Image(systemName: "chevron.down")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 32, height: 32)
+                    .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
+            .accessibilityLabel("Back to Player")
+        }
+        .padding(.horizontal, 20)
+        .padding(.bottom, 10)
+    }
+
+    /// Panels float over the blurred backdrop: hide the Lists' own background
+    /// and let a material show through (the web client's translucent panel).
+    private func panelBody(_ panel: PlayerPanel) -> some View {
+        panelContent(panel)
+            .scrollContentBackground(.hidden)
+            .background(.ultraThinMaterial)
+    }
+
+    @ViewBuilder
+    private func panelContent(_ panel: PlayerPanel) -> some View {
+        switch panel {
+        case .lyrics: LyricsView()
+        case .queue: QueuePanel()
+        case .related: RelatedPanel()
         }
     }
 }

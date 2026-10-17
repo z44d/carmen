@@ -1,7 +1,11 @@
 //
 //  MiniPlayer.swift
-//  Carmen — the floating now-playing bar above the tab bar. Tap opens the
-//  full screen player; the trailing button plays/pauses.
+//  Carmen — the floating now-playing bar above the tab bar.
+//
+//  Tapping (or dragging up) expands the full player; the trailing buttons
+//  play/pause and skip. A hairline progress rail rides the top edge and the
+//  play button carries the chosen accent — same chrome the frontend's
+//  PlayerBar shows.
 //
 
 import SwiftUI
@@ -10,8 +14,6 @@ struct MiniPlayer: View {
     @Environment(Player.self) private var player
 
     var body: some View {
-        @Bindable var player = player
-
         if let track = player.current {
             HStack(spacing: 12) {
                 ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 6)
@@ -42,57 +44,45 @@ struct MiniPlayer: View {
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
                         .font(.title3)
+                        .foregroundStyle(Color.carmenOnAccent)
                         .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
+                        .background(Circle().fill(Color.carmen))
+                        .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.primary)
 
                 Button {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
                         .font(.title3)
+                        .foregroundStyle(.primary)
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
-                .foregroundStyle(.primary)
-                .disabled(!player.hasNext)
             }
             .padding(.horizontal, 12)
-            .padding(.vertical, 8)
-            .glassCard(cornerRadius: 14)
-            .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+            .frame(height: 56)
+            .glassCard(cornerRadius: 16)
+            .overlay(alignment: .top) {
+                // Progress rail, inset so it never pokes out of the corners.
+                GeometryReader { proxy in
+                    Capsule()
+                        .fill(Color.carmen)
+                        .frame(width: proxy.size.width * player.progress, height: 2)
+                }
+                .frame(height: 2)
+                .padding(.horizontal, 14)
+            }
             .contentShape(Rectangle())
-            .onTapGesture {
-                player.showNowPlaying = true
-            }
-            .contextMenu {
-                Button {
-                    player.togglePlayPause()
-                } label: {
-                    Label(
-                        player.isPlaying ? "Pause" : "Play",
-                        systemImage: player.isPlaying ? "pause.fill" : "play.fill")
-                }
-                Button {
-                    player.next()
-                } label: {
-                    Label("Next", systemImage: "forward.fill")
-                }
-                Divider()
-                Button {
-                    player.showNowPlaying = true
-                } label: {
-                    Label("Show Now Playing", systemImage: "music.note.list")
-                }
-                Button(role: .destructive) {
-                    player.stop()
-                } label: {
-                    Label("Clear Queue", systemImage: "xmark")
-                }
-            }
+            .onTapGesture { player.openPlayer() }
+            .gesture(
+                DragGesture(minimumDistance: 8)
+                    .onEnded { value in
+                        if value.translation.height < -12 { player.openPlayer() }
+                    }
+            )
         }
     }
 }

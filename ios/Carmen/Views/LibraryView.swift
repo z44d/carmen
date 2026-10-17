@@ -9,6 +9,7 @@ import SwiftUI
 
 struct LibraryView: View {
     @Environment(LibraryStore.self) private var library
+    @Environment(DownloadsStore.self) private var downloads
 
     @State private var showingNewPlaylist = false
     @State private var newName = ""
@@ -29,6 +30,9 @@ struct LibraryView: View {
                         chip(title: "Favorite Songs", symbol: "heart.fill", count: library.favorites.count) {
                             tracksSheet = TracksSheetItem(title: "Favorite Songs", tracks: library.favorites)
                         }
+                        chip(title: "Downloads", symbol: "arrow.down.circle.fill", count: downloads.downloadedIds.count) {
+                            withAnimation { proxy.scrollTo("downloads", anchor: .top) }
+                        }
                         chip(title: "Recently Played", symbol: "clock.arrow.circlepath", count: library.recents.count) {
                             tracksSheet = TracksSheetItem(title: "Recently Played", tracks: library.recents)
                         }
@@ -39,6 +43,8 @@ struct LibraryView: View {
                     .padding(.horizontal)
 
                     favoritesSection
+                    downloadsSection
+                        .id("downloads")
                     recentsSection
                     playlistsSection
                         .id("playlists")
@@ -122,6 +128,22 @@ struct LibraryView: View {
         }
     }
 
+    private var downloadsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            sectionHeader("Downloads", count: downloads.downloadedIds.count) {
+                tracksSheet = TracksSheetItem(title: "Downloads", tracks: downloads.downloadedTracks())
+            }
+            if downloads.downloadedIds.isEmpty {
+                EmptyState(
+                    title: "No Downloads",
+                    hint: "Use the download button on any song to keep its audio, artwork and lyrics on this device — it then plays fully offline."
+                )
+            } else {
+                trackRows(downloads.downloadedTracks())
+            }
+        }
+    }
+
     private var recentsSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             sectionHeader("Recently Played", count: library.recents.count) {
@@ -181,7 +203,7 @@ struct LibraryView: View {
             VStack(spacing: 6) {
                 Image(systemName: symbol)
                     .font(.title3)
-                    .foregroundStyle(Color.accentColor)
+                    .foregroundStyle(Color.carmen)
                 Text("\(count)")
                     .font(.title3.weight(.bold))
                     .monospacedDigit()

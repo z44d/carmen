@@ -9,6 +9,7 @@ import AVFoundation
 import Foundation
 import MediaPlayer
 import Observation
+import SwiftUI
 import UIKit
 
 enum RepeatMode: String, CaseIterable, Sendable {
@@ -50,10 +51,28 @@ final class Player {
     private(set) var duration: Double = 0
     private(set) var errorMessage: String?
 
-    var shuffle = false
-    var repeatMode: RepeatMode = .off
-    /// Presented as a full-screen cover from the root.
-    var showNowPlaying = false
+    var shuffle: Bool {
+        get { _shuffle }
+        set {
+            _shuffle = newValue
+            UserDefaults.standard.set(newValue, forKey: Self.shuffleKey)
+        }
+    }
+
+    var repeatMode: RepeatMode {
+        get { RepeatMode(rawValue: _repeatModeRaw) ?? .off }
+        set {
+            _repeatModeRaw = newValue.rawValue
+            UserDefaults.standard.set(newValue.rawValue, forKey: Self.repeatModeKey)
+        }
+    }
+
+    /// Mount flag for the player overlay — presentation always goes through
+    /// `openPlayer()` / `closePlayer()` so `expansion` never gets out of sync.
+    private(set) var showNowPlaying = false
+    /// 0 = collapsed on the mini bar, 1 = fully expanded. The drag gesture
+    /// writes it directly so the sheet tracks the finger.
+    var expansion: Double = 0
 
     // MARK: Lyrics
 
@@ -62,18 +81,47 @@ final class Player {
     /// `false` renders the unsynced plain-text view instead of timed lines.
     var syncedLyricsEnabled = true
 
+    // MARK: Related songs (auto-continue + Home suggestions)
+
+    /// `/browsing/related/{id}` for the current track — the player's Related
+    /// tab, the auto-continue pool, and (first 10) the Home suggestion feed.
+    private(set) var related: [Track] = []
+    /// Which song `related` describes (nil while it never loaded).
+    private(set) var relatedVideoId: String?
+    private(set) var relatedLoading = false
+
+    // MARK: Motion (animated) artwork
+
+    /// Resolved motion-artwork mp4 for the current track (nil = none yet).
+    private(set) var motionArtworkURL: String?
+
     // MARK: Engine
 
     private let engine = AVPlayer()
+    private let streamLoader = StreamResourceLoader()
+    private let streamLoaderQueue = DispatchQueue(label: "carmen.player.stream-loader")
     private let metaCache = TrackMetaCache()
     private var timeObserver: Any?
     private var endObserver: NSObjectProtocol?
     private var statusObservation: NSKeyValueObservation?
     private var lyricTask: Task<Void, Never>?
+    private var relatedTask: Task<Void, Never>?
+    private var motionTask: Task<Void, Never>?
     private var lastActivityPush: Date = .distantPast
     private var lastResumeSave: Date = .distantPast
     private var lastNowPlayingSync: Date = .distantPast
     private var streamBroken = false
+    /// videoId → center-cropped square artwork for the media session.
+    private var artworkCache: [String: UIImage] = [:]
+    private var artworkPending: Set<String> = []
+    /// album/term key → motion mp4 URL ("" = catalogue says none).
+    private var motionURLCache: [String: String] = [:]
+
+    private var _shuffle = false
+    private var _repeatModeRaw = RepeatMode.off.rawValue
+
+    private static let shuffleKey = "carmen.player.shuffle"
+    private static let repeatModeKey = "carmen.player.repeat"
 
     /// Fresh client per request so a Settings base-URL change applies at once.
     private var api: API { API(baseURL: SettingsStore.shared.apiBaseURL) }
@@ -101,10 +149,39 @@ final class Player {
     }
 
     private init() {
+        _shuffle = UserDefaults.standard.bool(forKey: Self.shuffleKey)
+        _repeatModeRaw = UserDefaults.standard.string(forKey: Self.repeatModeKey) ?? RepeatMode.off.rawValue
         configureAudioSession()
         observePlayback()
         configureRemoteCommands()
         restorePersistedQueue()
+    }
+
+    // MARK: - Presentation
+
+    /// Expand the player from the mini bar (tap / swipe up). Mounts the
+    /// overlay at expansion 0 first, then animates up — the async hop is what
+    /// makes the slide actually play.
+    func openPlayer() {
+        guard !showNowPlaying || expansion < 1 else { return }
+        expansion = 0
+        showNowPlaying = true
+        DispatchQueue.main.async {
+            withAnimation(.spring(response: 0.42, dampingFraction: 0.86)) {
+                self.expansion = 1
+            }
+        }
+    }
+
+    /// Collapse back to the mini bar, then unmount once the slide finished.
+    func closePlayer() {
+        withAnimation(.spring(response: 0.34, dampingFraction: 0.9)) {
+            expansion = 0
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.55) { [weak self] in
+            guard let self, self.expansion == 0 else { return }
+            self.showNowPlaying = false
+        }
     }
 
     // MARK: - Queue API
@@ -263,8 +340,19 @@ final class Player {
         }
     }
 
+    /// Queue panel "Clear": keep the current song playing, drop everything
+    /// queued after it (Apple Music / frontend `clearQueue` semantics).
+    func clearUpcoming() {
+        guard let current else { return }
+        queue = [current]
+        currentIndex = 0
+        persistQueue()
+    }
+
     func stop() {
         lyricTask?.cancel()
+        relatedTask?.cancel()
+        motionTask?.cancel()
         engine.pause()
         engine.replaceCurrentItem(with: nil)
         isPlaying = false
@@ -275,11 +363,16 @@ final class Player {
         queue = []
         currentIndex = 0
         lyrics = nil
+        related = []
+        relatedVideoId = nil
+        relatedLoading = false
+        motionArtworkURL = nil
         errorMessage = nil
         UserDefaults.standard.removeObject(forKey: resumeKey)
         UserDefaults.standard.removeObject(forKey: queueKey)
         LyricActivityController.shared.end()
         syncNowPlaying()
+        if showNowPlaying { closePlayer() }
     }
 
     // MARK: - Stations / watch
@@ -348,14 +441,24 @@ final class Player {
         syncNowPlaying()
         pushLiveActivity(force: true)
         loadLyrics(for: track)
+        loadRelated(for: track)
+        resolveMotionArtwork(for: track)
         updateRemoteCommands()
 
-        guard let url = api.streamURL(videoId: track.videoId) else {
+        // Source chain: downloaded file → `carmen-cache://` (disk cache) →
+        // failure. A saved song never touches the network again.
+        let item: AVPlayerItem
+        if let local = DownloadsStore.shared.audioURL(videoId: track.videoId) {
+            item = AVPlayerItem(url: local)
+        } else if let url = api.cachedStreamURL(videoId: track.videoId) {
+            let asset = AVURLAsset(url: url)
+            // The delegate must be attached before the asset is ever used.
+            asset.resourceLoader.setDelegate(streamLoader, queue: streamLoaderQueue)
+            item = AVPlayerItem(asset: asset)
+        } else {
             handleStreamFailure(for: track, detail: "missing stream url")
             return
         }
-
-        let item = AVPlayerItem(url: url)
 
         statusObservation?.invalidate()
         statusObservation = item.observe(\.status, options: [.new]) { [weak self] observed, _ in
@@ -428,9 +531,15 @@ final class Player {
         if currentIndex + 1 < queue.count {
             currentIndex += 1
             startCurrent(resumeAt: 0)
-        } else if repeatMode == .all || manual {
-            // Wraps to the start — for `.all` at natural end, and always when
-            // the user explicitly skipped past the last track (Apple Music).
+        } else if manual {
+            // The user explicitly skipped past the last track — wrap to the
+            // start (Apple Music behaviour).
+            currentIndex = 0
+            startCurrent(resumeAt: 0)
+        } else if continueWithRelated() {
+            // Frontend parity: the related list keeps the music going when
+            // the queue runs out (starts playback internally).
+        } else if repeatMode == .all {
             currentIndex = 0
             startCurrent(resumeAt: 0)
         } else {
@@ -475,6 +584,19 @@ final class Player {
         lyricTask?.cancel()
         let provider = SettingsStore.shared.lyricsProviderParam
         let wantSynced = syncedLyricsEnabled
+
+        // Offline first: a downloaded song's `track.json` already carries its
+        // lyrics — only fall back to the network when it has none (same rule
+        // as the web client).
+        if let offline = Self.resolveLyrics(
+            DownloadsStore.shared.detail(videoId: track.videoId)?.lyrics,
+            wantSynced: wantSynced
+        ) {
+            lyrics = offline
+            pushLiveActivity(force: true)
+            return
+        }
+
         lyricTask = Task { [weak self] in
             guard let self else { return }
             // Small delay so rapid skips only fetch the track that sticks.
@@ -600,20 +722,189 @@ final class Player {
         if !track.albumName.isEmpty {
             dict[MPMediaItemPropertyAlbumTitle] = track.albumName
         }
+        // The media session wants 1:1 — hand it the center crop, never the
+        // raw 16:9 thumbnail (which renders stretched in Control Center).
+        if let square = artworkCache[track.videoId] {
+            dict[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: square.size) { _ in square }
+        }
+        // iOS 26 lock-screen motion artwork, when the track has any.
+        if let motionURL = motionArtworkURL {
+            dict = animatedArtwork(dict, track: track, motionURL: motionURL)
+        }
         info.nowPlayingInfo = dict
 
-        // Artwork is fetched off the main path; only applies if still current.
-        guard let artString = track.artwork ?? track.artworkAlt, let artURL = URL(string: artString) else { return }
-        let wantedId = track.videoId
-        Task { [weak self] in
-            guard let (data, _) = try? await URLSession.shared.data(from: artURL),
-                let image = UIImage(data: data)
-            else { return }
-            guard let self, self.current?.videoId == wantedId else { return }
-            var updated = dict
-            updated[MPMediaItemPropertyArtwork] = MPMediaItemArtwork(boundsSize: image.size) { _ in image }
-            MPNowPlayingInfoCenter.default().nowPlayingInfo = updated
+        // Kick the artwork fetch once per track; the cache is consulted on
+        // every later sync so the square crop lands as soon as it exists.
+        if artworkCache[track.videoId] == nil, artworkPending.insert(track.videoId).inserted {
+            Task { [weak self] in
+                guard let self else { return }
+                defer { self.artworkPending.remove(track.videoId) }
+                _ = await self.squareArtwork(for: track)
+            }
         }
+    }
+
+    /// Center-cropped square artwork for a track — the media session's 1:1
+    /// image. Downloaded copy first (no network), then the payload artwork.
+    func squareArtwork(for track: Track) async -> UIImage? {
+        if let cached = artworkCache[track.videoId] { return cached }
+        var image: UIImage?
+        if let local = DownloadsStore.shared.artworkURL(videoId: track.videoId) {
+            image = UIImage(contentsOfFile: local.path)
+        }
+        if image == nil, let remote = track.artwork ?? track.artworkAlt, let url = URL(string: remote),
+            let (data, _) = try? await URLSession.shared.data(from: url)
+        {
+            image = UIImage(data: data)
+        }
+        guard let image else { return nil }
+        let square = Self.centerSquare(of: image)
+        artworkCache[track.videoId] = square
+        if artworkCache.count > 30, let stale = artworkCache.keys.first(where: { $0 != track.videoId }) {
+            artworkCache.removeValue(forKey: stale)
+        }
+        if current?.videoId == track.videoId { syncNowPlaying() }
+        return square
+    }
+
+    /// Crop a rectangle down to its centered square (what the system views
+    /// expect for `MPMediaItemArtwork` and the 1×1 animated-artwork slot).
+    private static func centerSquare(of image: UIImage) -> UIImage {
+        guard let cg = image.cgImage else { return image }
+        let side = min(cg.width, cg.height)
+        let origin = CGPoint(x: (cg.width - side) / 2, y: (cg.height - side) / 2)
+        guard let cropped = cg.cropping(to: CGRect(origin: origin, size: CGSize(width: side, height: side)))
+        else { return image }
+        return UIImage(cgImage: cropped, scale: image.scale, orientation: image.imageOrientation)
+    }
+
+    /// Attach an `MPMediaItemAnimatedArtwork` (iOS 26) when the track has
+    /// motion artwork. The system calls the handlers later: the preview must
+    /// return a square image fast; the video handler may download the mp4 and
+    /// must answer with a *local* file URL.
+    private func animatedArtwork(_ dict: [String: Any], track: Track, motionURL: String) -> [String: Any] {
+        guard #available(iOS 26.0, *) else { return dict }
+        guard MPNowPlayingInfoCenter.supportedAnimatedArtworkKeys.contains(
+            MPNowPlayingInfoProperty1x1AnimatedArtwork
+        ) else { return dict }
+
+        let preview = artworkCache[track.videoId]
+        let artworkID = "carmen.\(track.album?.id ?? track.videoId)"
+        var updated = dict
+        let animated = MPMediaItemAnimatedArtwork(
+            artworkID: artworkID,
+            previewImageRequestHandler: { [weak self] _ in
+                if let preview { return preview }
+                guard let self else { return nil }
+                return await self.squareArtwork(for: track)
+            },
+            videoAssetFileURLRequestHandler: { _ in
+                await MotionArtwork.localFile(urlString: motionURL, id: artworkID)
+            }
+        )
+        updated[MPNowPlayingInfoProperty1x1AnimatedArtwork] = animated
+        return updated
+    }
+
+    // MARK: - Related songs
+
+    /// Fetch `/browsing/related/{id}` for the current track (debounced so
+    /// rapid skips only load the track that sticks). The first 10 feed the
+    /// Home "Suggested for you" pool.
+    private func loadRelated(for track: Track) {
+        relatedTask?.cancel()
+        relatedTask = Task { [weak self] in
+            guard let self else { return }
+            // Small delay so rapid skips only fetch the track that sticks.
+            try? await Task.sleep(for: .milliseconds(400))
+            if Task.isCancelled { return }
+            self.relatedLoading = true
+            do {
+                let tracks = try await self.api.related(track.videoId, limit: 25)
+                if Task.isCancelled { return }
+                let cleaned = tracks.filter { $0.videoId != track.videoId }
+                self.related = cleaned
+                self.relatedVideoId = track.videoId
+                self.relatedLoading = false
+                LibraryStore.shared.addSuggestions(Array(cleaned.prefix(10)))
+            } catch is CancellationError {
+                self.relatedLoading = false
+            } catch {
+                if !Task.isCancelled {
+                    self.related = []
+                    self.relatedVideoId = track.videoId
+                    self.relatedLoading = false
+                }
+            }
+        }
+    }
+
+    /// Natural end of the queue → keep playing from the related list (the
+    /// web client's buildNext: unplayed first, then the whole list again).
+    @discardableResult private func continueWithRelated() -> Bool {
+        guard relatedVideoId == current?.videoId, !related.isEmpty else { return false }
+        let queued = Set(queue.map(\.videoId))
+        let finished = current?.videoId
+        var upcoming = related.filter { !queued.contains($0.videoId) && $0.videoId != finished }
+        if upcoming.isEmpty {
+            // Everything related is already queued — cycle the list anyway so
+            // the music never just stops mid-session.
+            upcoming = related.filter { $0.videoId != finished }
+        }
+        guard !upcoming.isEmpty else { return false }
+        queue.append(contentsOf: upcoming)
+        persistQueue()
+        currentIndex += 1
+        startCurrent(resumeAt: 0)
+        return true
+    }
+
+    // MARK: - Motion artwork
+
+    /// Walk the Apple-catalogue chain for the track's motion cover (album
+    /// browse id → iTunes collection → mp4). "No motion art" caches too, so
+    /// a track is only ever looked up once.
+    private func resolveMotionArtwork(for track: Track) {
+        motionTask?.cancel()
+        motionArtworkURL = nil
+        motionTask = Task { [weak self] in
+            guard let self else { return }
+            let resolved = await self.motionURL(for: track)
+            if Task.isCancelled { return }
+            self.motionArtworkURL = resolved
+            self.syncNowPlaying()  // pick the animated artwork up (or drop it)
+        }
+    }
+
+    private func motionURL(for track: Track) async -> String? {
+        let key: String
+        if let albumId = track.album?.id, !albumId.isEmpty {
+            key = "album:\(albumId)"
+        } else {
+            key = "term:\(track.title)|\(track.artistLine)"
+        }
+        if let cached = motionURLCache[key] { return cached.isEmpty ? nil : cached }
+
+        let api = self.api
+        var resolved: String?
+        do {
+            var collectionId: Int?
+            if let albumId = track.album?.id, albumId.hasPrefix("MPRE") {
+                collectionId = try await api.itunesId(albumId)
+            }
+            if collectionId == nil {
+                collectionId = try await api.itunesId(term: "\(track.title) - \(track.artistLine)", entity: "song")
+            }
+            if let collectionId {
+                resolved = try await api.animatedArtwork(collectionId)
+            }
+        } catch is CancellationError {
+            return nil
+        } catch {
+            resolved = nil
+        }
+        motionURLCache[key] = resolved ?? ""
+        return resolved
     }
 
     // MARK: - Live Activity

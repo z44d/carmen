@@ -1,19 +1,18 @@
 //
 //  RootView.swift
 //  Carmen — the three-tab shell (Home / Search / Library), the floating mini
-//  player and the full-screen Now Playing cover.
+//  player and the full Now Playing overlay.
 //
 //  Each tab owns its own NavigationStack; the mini player floats above the
-//  tab bar and the Now Playing screen is presented as a full-screen cover
-//  from the Player's `showNowPlaying` flag.
+//  tab bar. The full player is an overlay driven by the Player's
+//  `expansion` (0 = parked below screen on the mini bar, 1 = full) so it can
+//  be dragged open and closed interactively.
 //
 
 import SwiftUI
 
 struct RootView: View {
     @Environment(Player.self) private var player
-    @Environment(SettingsStore.self) private var settings
-    @Environment(LibraryStore.self) private var library
 
     @State private var selectedTab: Tab = .home
 
@@ -22,8 +21,6 @@ struct RootView: View {
     }
 
     var body: some View {
-        @Bindable var player = player
-
         ZStack(alignment: .bottom) {
             TabView(selection: $selectedTab) {
                 NavigationStack {
@@ -48,14 +45,32 @@ struct RootView: View {
                 .tag(Tab.library)
             }
 
-            // Mini player floats just above the tab bar when something is queued.
+            // Mini player floats just above the tab bar when something is
+            // queued — it cross-fades out as the full player expands over it.
             if player.hasQueue {
                 MiniPlayer()
                     .padding(.horizontal, 8)
                     .padding(.bottom, 49)  // tab bar height + margin
+                    .opacity(player.showNowPlaying ? max(0, 1 - player.expansion * 2) : 1)
+                    .scaleEffect(player.showNowPlaying ? max(0.92, 1 - player.expansion * 0.08) : 1)
                     .transition(.move(edge: .bottom).combined(with: .opacity))
             }
+
+            // Full player: slides up from the mini bar's position — mounted at
+            // expansion 0, then animated to 1 (openPlayer), and drag-tracked
+            // back down inside NowPlayingView. Fixed travel (taller than any
+            // iPhone) so the view is fully parked off-screen at expansion 0.
+            if player.showNowPlaying {
+                NowPlayingView()
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    .offset(y: (1 - player.expansion) * 1000)
+                    .opacity(min(1, player.expansion * 2.5))
+                    .zIndex(3)
+            }
         }
+        // Chosen accent (Settings → Appearance). Applied here rather than in
+        // the App scene so the @Observable read re-renders every surface live.
+        .tint(Color.carmen)
         .animation(.snappy(duration: 0.25), value: player.hasQueue)
         // Stream failure banner — sits above everything while the player is stuck.
         .overlay(alignment: .top) {
@@ -67,12 +82,6 @@ struct RootView: View {
             }
         }
         .animation(.snappy(duration: 0.2), value: player.errorMessage)
-        .fullScreenCover(isPresented: $player.showNowPlaying) {
-            NowPlayingView()
-                .environment(player)
-                .environment(library)
-                .environment(settings)
-        }
         .task {
             // Re-attach the lyric Live Activity if one outlived the app.
             LyricActivityController.shared.adoptExisting()

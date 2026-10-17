@@ -79,7 +79,7 @@ struct SearchView: View {
                     } label: {
                         Image(systemName: "trash")
                             .font(.subheadline)
-                            .foregroundStyle(Color.accentColor)
+                            .foregroundStyle(Color.carmen)
                     }
                     .buttonStyle(.plain)
                 }

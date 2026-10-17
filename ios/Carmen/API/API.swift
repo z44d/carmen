@@ -159,6 +159,41 @@ struct API: Sendable {
         return url
     }
 
+    /// Same stream, but on the `carmen-cache` scheme so AVPlayer routes it
+    /// through the local disk cache (`StreamResourceLoader`). The loader
+    /// rewrites the scheme back to https when it actually fetches.
+    func cachedStreamURL(videoId: String) -> URL? {
+        guard let remote = streamURL(videoId: videoId) else { return nil }
+        var components = URLComponents(url: remote, resolvingAgainstBaseURL: false)
+        components?.scheme = StreamResourceLoader.scheme
+        return components?.url
+    }
+
+    // MARK: Motion (animated) artwork — the same Apple catalogue chain the
+    // web client walks: YT Music album → iTunes collection → motion mp4.
+
+    /// `{collection_id: Int?}` — iTunes collection id of a `MPRE…` album.
+    func itunesId(_ albumId: String) async throws -> Int? {
+        struct Payload: Decodable { let collection_id: Int? }
+        let payload: Payload = try await get("/browsing/itunes-id/\(albumId)")
+        return payload.collection_id
+    }
+
+    /// `{collection_id: Int?}` — flat "Title - Artist" lookup for tracks whose
+    /// payload carries no album browse id.
+    func itunesId(term: String, entity: String = "song") async throws -> Int? {
+        struct Payload: Decodable { let collection_id: Int? }
+        let payload: Payload = try await get("/browsing/itunes-id", ["term": term, "entity": entity])
+        return payload.collection_id
+    }
+
+    /// `{video_url: String?}` — direct mp4 of an album's motion artwork.
+    func animatedArtwork(_ collectionId: Int) async throws -> String? {
+        struct Payload: Decodable { let video_url: String? }
+        let payload: Payload = try await get("/browsing/animated-artwork/\(collectionId)")
+        return payload.video_url
+    }
+
     /// Probe the stream with a 2-byte range to surface the server's `detail`
     /// message when a track fails to start (same trick as PlayerContext.tsx).
     func streamError(videoId: String) async -> String? {

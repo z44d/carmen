@@ -9,9 +9,12 @@ import SwiftUI
 struct SettingsView: View {
     @Environment(SettingsStore.self) private var settings
     @Environment(Player.self) private var player
+    @Environment(DownloadsStore.self) private var downloads
     @Environment(\.dismiss) private var dismiss
 
     @State private var syncedLyrics = true
+
+    private let swatchColumns = [GridItem(.adaptive(minimum: 44), spacing: 12)]
 
     var body: some View {
         @Bindable var settings = settings
@@ -37,6 +40,35 @@ struct SettingsView: View {
             }
 
             Section {
+                LazyVGrid(columns: swatchColumns, spacing: 12) {
+                    ForEach(AccentOption.allCases) { option in
+                        Button {
+                            settings.accent = option
+                        } label: {
+                            Circle()
+                                .fill(Color(hex: option.hex))
+                                .frame(width: 30, height: 30)
+                                .overlay {
+                                    Circle().strokeBorder(.secondary.opacity(0.35), lineWidth: 0.5)
+                                }
+                                .overlay {
+                                    if settings.accent == option {
+                                        Circle().strokeBorder(Color.primary, lineWidth: 2)
+                                    }
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .accessibilityLabel(option.name)
+                    }
+                }
+                .padding(.vertical, 4)
+            } header: {
+                Text("Appearance")
+            } footer: {
+                Text("Accent color — defaults to Material Green (#4CAF50), the same palette the web app ships.")
+            }
+
+            Section {
                 Picker("Provider", selection: $settings.lyricsProvider) {
                     ForEach(LyricsProvider.allCases) { provider in
                         Text(provider.label).tag(provider)
@@ -56,6 +88,20 @@ struct SettingsView: View {
                 Text("Live Activities")
             } footer: {
                 Text("Show the current lyric on the Lock Screen and Dynamic Island while music plays.")
+            }
+
+            Section {
+                LabeledContent("Downloaded Songs", value: "\(downloads.downloadedIds.count)")
+                LabeledContent("Storage Used", value: downloads.totalSizeLabel)
+                if !downloads.downloadedIds.isEmpty {
+                    Button("Remove All Downloads", role: .destructive) {
+                        downloads.removeAll()
+                    }
+                }
+            } header: {
+                Text("Storage")
+            } footer: {
+                Text("A download keeps the audio, artwork and lyrics on the device — the song then plays and shows its lyrics fully offline.")
             }
 
             Section {

@@ -6,6 +6,33 @@
 
 import SwiftUI
 
+// MARK: - Accent
+
+extension Color {
+    /// Hex string ("#RRGGBB") → Color.
+    init(hex: String) {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
+        self.init(
+            .sRGB,
+            red: Double((value >> 16) & 0xFF) / 255,
+            green: Double((value >> 8) & 0xFF) / 255,
+            blue: Double(value & 0xFF) / 255,
+            opacity: 1
+        )
+    }
+
+    /// The app-wide accent (Settings → Appearance, default Material Green).
+    /// Read through the observable store so every surface re-renders live.
+    @MainActor static var carmen: Color { Color(hex: SettingsStore.shared.accent.hex) }
+
+    /// Ink for filled-accent surfaces (play button, FABs): stays readable on
+    /// the near-white accent too.
+    @MainActor static var carmenOnAccent: Color {
+        SettingsStore.shared.accent == .white ? .black.opacity(0.85) : .white
+    }
+}
+
 // MARK: - Navigation
 
 /// Push destinations, built from feed/search cards. Songs and stations are
@@ -203,7 +230,8 @@ struct EmptyState: View {
 // MARK: - Track row
 
 /// One row of a song list: artwork (or index), title, artist, duration and
-/// the Apple Music-style context menu. Tapping plays `track` inside `context`.
+/// the Apple Music-style context menu. Tapping plays `track` inside `context`;
+/// the trailing heart favorites it without opening anything.
 struct TrackRow: View {
     let track: Track
     var context: [Track] = []
@@ -213,43 +241,55 @@ struct TrackRow: View {
 
     @Environment(Player.self) private var player
     @Environment(LibraryStore.self) private var library
+    @Environment(DownloadsStore.self) private var downloads
 
     private var isCurrent: Bool { player.current?.videoId == track.videoId }
 
     var body: some View {
-        Button {
-            let startAt = context.firstIndex { $0.videoId == track.videoId } ?? 0
-            player.play(context.isEmpty ? [track] : context, startAt: startAt)
-        } label: {
-            HStack(spacing: 12) {
-                artworkOrIndex
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 5) {
-                        Text(track.title)
-                            .font(.body)
-                            .lineLimit(1)
-                            .foregroundStyle(isCurrent ? Color.accentColor : .primary)
-                        if track.isExplicit { ExplicitBadge() }
+        HStack(spacing: 4) {
+            Button {
+                let startAt = context.firstIndex { $0.videoId == track.videoId } ?? 0
+                player.play(context.isEmpty ? [track] : context, startAt: startAt)
+            } label: {
+                HStack(spacing: 12) {
+                    artworkOrIndex
+                    VStack(alignment: .leading, spacing: 2) {
+                        HStack(spacing: 5) {
+                            Text(track.title)
+                                .font(.body)
+                                .lineLimit(1)
+                                .foregroundStyle(isCurrent ? Color.carmen : .primary)
+                            if track.isExplicit { ExplicitBadge() }
+                        }
+                        HStack(spacing: 4) {
+                            Text(subtitle)
+                                .font(.footnote)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(1)
+                            if downloads.isDownloaded(track.videoId) {
+                                Image(systemName: "checkmark.circle.fill")
+                                    .font(.caption2)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
                     }
-                    Text(subtitle)
-                        .font(.footnote)
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
+                    Spacer(minLength: 8)
+                    if isCurrent {
+                        Image(systemName: "waveform")
+                            .font(.footnote)
+                            .foregroundStyle(Color.carmen)
+                    } else {
+                        Text(track.durationLabel ?? "")
+                            .font(.footnote.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
                 }
-                Spacer(minLength: 8)
-                if isCurrent {
-                    Image(systemName: "waveform")
-                        .font(.footnote)
-                        .foregroundStyle(Color.accentColor)
-                } else {
-                    Text(track.durationLabel ?? "")
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.secondary)
-                }
+                .contentShape(Rectangle())
             }
-            .contentShape(Rectangle())
+            .buttonStyle(.plain)
+
+            FavoriteButton(track: track)
         }
-        .buttonStyle(.plain)
         .contextMenu { menu }
     }
 
@@ -284,24 +324,24 @@ struct TrackRow: View {
             Label("Add to Queue", systemImage: "list.bullet.plus")
         }
         Button {
+            library.toggleFavorite(track)
+        } label: {
+            Label(
+                library.isFavorite(track.videoId) ? "Remove Favorite" : "Favorite",
+                systemImage: library.isFavorite(track.videoId) ? "heart.slash" : "heart")
+        }
+        Button {
             player.playStation(seed: track)
         } label: {
             Label("Play Radio", systemImage: "dot.radiowaves.left.and.right")
         }
         Menu {
-            Button {
-                library.toggleFavorite(track)
-            } label: {
-                Label(
-                    library.isFavorite(track.videoId) ? "Remove Favorite" : "Favorite",
-                    systemImage: library.isFavorite(track.videoId) ? "heart.slash" : "heart")
-            }
-            Divider()
             PlaylistPickerMenu(track: track)
         } label: {
-            Label("Favorite…", systemImage: "ellipsis")
+            Label("Add to Playlist…", systemImage: "music.note.list")
         }
         Divider()
+        DownloadMenuItems(track: track)
         if let albumId = track.album?.id, !albumId.isEmpty {
             NavigationLink(value: Route.album(browseId: albumId, title: track.albumName)) {
                 Label("Go to Album", systemImage: "square.stack")
@@ -314,6 +354,132 @@ struct TrackRow: View {
         }
         ShareLink(item: "https://carmen.z44d.com/?song=\(track.videoId)") {
             Label("Share", systemImage: "square.and.arrow.up")
+        }
+    }
+}
+
+// MARK: - Favorite / download controls
+
+/// Trailing heart that toggles a song as a favorite (Apple Music placement).
+struct FavoriteButton: View {
+    let track: Track
+
+    @Environment(LibraryStore.self) private var library
+
+    private var isFavorite: Bool { library.isFavorite(track.videoId) }
+
+    var body: some View {
+        Button {
+            library.toggleFavorite(track)
+        } label: {
+            Image(systemName: isFavorite ? "heart.fill" : "heart")
+                .font(.footnote)
+                .foregroundStyle(isFavorite ? Color.carmen : Color.secondary)
+                .frame(width: 32, height: 32)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .accessibilityLabel(isFavorite ? "Remove Favorite" : "Favorite")
+    }
+}
+
+/// The circular download control: idle → progress ring (with % when the
+/// server declared a size) → check, tap again removes. Mirrors the web
+/// client's DownloadButton, including the failure alert.
+struct DownloadButton: View {
+    let track: Track
+    var diameter: CGFloat = 24
+
+    @Environment(DownloadsStore.self) private var downloads
+
+    private var state: DownloadsStore.State? { downloads.state(for: track.videoId) }
+
+    var body: some View {
+        Button {
+            if downloads.isDownloaded(track.videoId) || state != nil {
+                downloads.remove(videoId: track.videoId)
+            } else {
+                downloads.download(track)
+            }
+        } label: {
+            label
+                .frame(width: diameter + 12, height: diameter + 12)
+                .contentShape(Circle())
+        }
+        .buttonStyle(.plain)
+        .alert(
+            "Download Failed",
+            isPresented: Binding(
+                get: { downloads.failedIds.contains(track.videoId) },
+                set: { presented in
+                    if !presented { downloads.acknowledgeFailure(track.videoId) }
+                }
+            )
+        ) {
+            Button("OK", role: .cancel) {}
+        } message: {
+            Text("The download for “\(track.title)” could not be saved.")
+        }
+        .accessibilityLabel(labelDescription)
+    }
+
+    @ViewBuilder private var label: some View {
+        switch state {
+        case .running(let progress):
+            ZStack {
+                Circle()
+                    .stroke(Color.secondary.opacity(0.25), lineWidth: 2)
+                Circle()
+                    .trim(from: 0, to: max(progress, 0.02))
+                    .stroke(Color.carmen, style: StrokeStyle(lineWidth: 2, lineCap: .round))
+                    .rotationEffect(.degrees(-90))
+                if progress > 0.05 {
+                    Text("\(Int((progress * 100).rounded()))")
+                        .font(.system(size: diameter * 0.4, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Color.carmen)
+                }
+            }
+            .frame(width: diameter, height: diameter)
+        case .done:
+            Image(systemName: "checkmark.circle.fill")
+                .font(.system(size: diameter))
+                .foregroundStyle(Color.carmen)
+        case nil:
+            Image(systemName: "arrow.down.circle")
+                .font(.system(size: diameter + 2))
+                .foregroundStyle(Color.secondary)
+        }
+    }
+
+    private var labelDescription: String {
+        switch state {
+        case .running: return "Downloading"
+        case .done: return "Downloaded — tap to remove"
+        case nil: return downloads.isDownloaded(track.videoId) ? "Downloaded" : "Download"
+        }
+    }
+}
+
+/// Context-menu rows for a track's download state.
+struct DownloadMenuItems: View {
+    let track: Track
+
+    @Environment(DownloadsStore.self) private var downloads
+
+    var body: some View {
+        if downloads.isDownloaded(track.videoId) {
+            Button(role: .destructive) {
+                downloads.remove(videoId: track.videoId)
+            } label: {
+                Label("Remove Download", systemImage: "trash")
+            }
+        } else {
+            Button {
+                downloads.download(track)
+            } label: {
+                Label("Download", systemImage: "arrow.down.circle")
+            }
         }
     }
 }
@@ -438,6 +604,68 @@ struct CardTile: View {
         case .playlist, .station: return "music.note.list"
         case .album: return "square.stack"
         case .song, .unsupported: return "music.note"
+        }
+    }
+}
+
+// MARK: - Track tile
+
+/// Square tile of a bare `Track` (home suggestions): artwork, title, artist.
+/// `context` is the full play order the Home screen built around the tap
+/// (frontend: `[tapped] + recents + shuffled suggestions`).
+struct TrackTile: View {
+    let track: Track
+    var context: [Track]
+    var width: CGFloat = 150
+
+    @Environment(Player.self) private var player
+
+    private var isCurrent: Bool { player.current?.videoId == track.videoId }
+
+    var body: some View {
+        Button {
+            let startAt = context.firstIndex { $0.videoId == track.videoId } ?? 0
+            player.play(context.isEmpty ? [track] : context, startAt: startAt)
+        } label: {
+            VStack(alignment: .leading, spacing: 6) {
+                ZStack(alignment: .bottomLeading) {
+                    ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 8)
+                        .frame(width: width, height: width)
+                    if isCurrent {
+                        Image(systemName: "waveform")
+                            .font(.footnote)
+                            .foregroundStyle(.white)
+                            .padding(6)
+                            .shadow(radius: 2)
+                    }
+                }
+                HStack(spacing: 4) {
+                    Text(track.title)
+                        .font(.footnote.weight(.semibold))
+                        .lineLimit(2)
+                        .multilineTextAlignment(.leading)
+                        .foregroundStyle(isCurrent ? Color.carmen : .primary)
+                    if track.isExplicit { ExplicitBadge() }
+                }
+                Text(track.artistLine)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+            }
+            .frame(width: width, alignment: .leading)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .contextMenu {
+            Button { player.playNext(track) } label: {
+                Label("Play Next", systemImage: "text.insert")
+            }
+            Button { player.enqueue(track) } label: {
+                Label("Add to Queue", systemImage: "list.bullet.plus")
+            }
+            Divider()
+            FavoriteButton(track: track)
+            DownloadMenuItems(track: track)
         }
     }
 }

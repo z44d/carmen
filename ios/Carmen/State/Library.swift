@@ -36,9 +36,11 @@ final class LibraryStore {
         static let recents = "library.recents"
         static let playlists = "library.playlists"
         static let searchHistory = "library.searchHistory"
+        static let suggestions = "library.suggestions"
     }
 
-    private static let maxRecents = 40
+    private static let maxRecents = 10
+    private static let maxSuggestions = 100
     private static let maxSearchHistory = 10
 
     @ObservationIgnored private let defaults: UserDefaults = .standard
@@ -47,6 +49,7 @@ final class LibraryStore {
     private var _recents: [Track]
     private var _playlists: [LocalPlaylist]
     private var _searchHistory: [String]
+    private var _suggestions: [Track]
 
     // MARK: Observable API (each mutation persists)
 
@@ -83,11 +86,23 @@ final class LibraryStore {
         }
     }
 
+    /// "Suggested for you" — songs harvested from the related lists of what
+    /// the user plays (first 10 per play, FIFO cap 100). Backs the Home feed
+    /// exactly like `library.suggestions` on the web client.
+    var suggestions: [Track] {
+        get { _suggestions }
+        set {
+            _suggestions = newValue
+            save(Key.suggestions, newValue)
+        }
+    }
+
     init() {
         _favorites = Self.load([Track].self, forKey: Key.favorites) ?? []
         _recents = Self.load([Track].self, forKey: Key.recents) ?? []
         _playlists = Self.load([LocalPlaylist].self, forKey: Key.playlists) ?? []
         _searchHistory = Self.load([String].self, forKey: Key.searchHistory) ?? []
+        _suggestions = Self.load([Track].self, forKey: Key.suggestions) ?? []
     }
 
     // MARK: Favorites
@@ -111,6 +126,32 @@ final class LibraryStore {
         next.insert(track, at: 0)
         if next.count > Self.maxRecents { next = Array(next.prefix(Self.maxRecents)) }
         recents = next
+        // A song the user actually played is no longer a *suggestion*.
+        if _suggestions.contains(where: { $0.videoId == track.videoId }) {
+            suggestions = _suggestions.filter { $0.videoId != track.videoId }
+        }
+    }
+
+    // MARK: Suggestions (home feed)
+
+    /// Merge freshly harvested related songs into the pool: deduped against
+    /// recents + suggestions, FIFO-capped at 100 (mirrors `addSuggestions`).
+    func addSuggestions(_ tracks: [Track]) {
+        guard !tracks.isEmpty else { return }
+        var seen = Set(_recents.map(\.videoId))
+        seen.formUnion(_suggestions.map(\.videoId))
+        var next = _suggestions
+        for track in tracks where seen.insert(track.videoId).inserted {
+            next.append(track)
+        }
+        guard next.count != _suggestions.count else { return }
+        if next.count > Self.maxSuggestions { next = Array(next.suffix(Self.maxSuggestions)) }
+        suggestions = next
+    }
+
+    /// Re-shuffle the suggestion pool (the Home refresh button).
+    func reshuffleSuggestions() {
+        suggestions = _suggestions.shuffled()
     }
 
     // MARK: Local playlists

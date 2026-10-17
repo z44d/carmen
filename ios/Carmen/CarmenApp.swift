@@ -14,6 +14,7 @@ struct CarmenApp: App {
     @State private var settings = SettingsStore.shared
     @State private var library = LibraryStore.shared
     @State private var player = Player.shared
+    @State private var downloads = DownloadsStore.shared
 
     var body: some Scene {
         WindowGroup {
@@ -21,7 +22,7 @@ struct CarmenApp: App {
                 .environment(settings)
                 .environment(library)
                 .environment(player)
-                .tint(.pink)  // Apple Music red-pink
+                .environment(downloads)
         }
     }
 }

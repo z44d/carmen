@@ -552,7 +552,9 @@ struct TrackListPayload: Decodable, Sendable {
 }
 
 /// Enriched `/browsing/track/{videoId}` — metadata **and** lyrics in one call.
-struct TrackDetail: Decodable, Sendable {
+/// Flat on the wire: the track's own fields sit at the root next to `lyrics`,
+/// so encoding mirrors decoding (this is also the offline `track.json`).
+struct TrackDetail: Codable, Sendable {
     var track: Track
     var lyrics: Lyrics?
     var genre: String?
@@ -567,4 +569,15 @@ struct TrackDetail: Decodable, Sendable {
     }
 
     private enum CodingKeys: String, CodingKey { case lyrics, genre, description }
+
+    /// `Track.encode(to:)` requests the root container with its own keys, then
+    /// the extras are written beside them — JSONEncoder shares one storage for
+    /// both requests, exactly like `init(from:)` reads it.
+    func encode(to encoder: Encoder) throws {
+        try track.encode(to: encoder)
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encodeIfPresent(lyrics, forKey: .lyrics)
+        try container.encodeIfPresent(genre, forKey: .genre)
+        try container.encodeIfPresent(description, forKey: .description)
+    }
 }

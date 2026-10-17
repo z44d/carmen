@@ -1,10 +1,11 @@
 //
 //  LyricsView.swift
-//  Carmen — the synced-lyrics panel shown inside the Now Playing screen.
+//  Carmen — the lyrics panel shown inside the Now Playing screen.
 //
-//  Timed lines highlight and auto-scroll with the playhead (skipping `♪`
-//  instrumental rows, same as the Live Activity); providers that only gave
-//  plain text render as a scrollable paragraph.
+//  Timed lines highlight in the accent color, auto-scroll with the playhead
+//  and seek on tap (same as the web client); `♪` instrumental rows stay
+//  quiet. Providers that only gave plain text render as a scrollable
+//  paragraph with the source credited underneath.
 //
 
 import SwiftUI
@@ -21,7 +22,7 @@ struct LyricsView: View {
                 if lyrics.hasSyncedLines, let lines = lyrics.synced {
                     syncedBody(lines)
                 } else if let plain = lyrics.plainText {
-                    unsyncedBody(plain)
+                    unsyncedBody(plain, source: lyrics.source)
                 } else {
                     unavailable
                 }
@@ -30,7 +31,7 @@ struct LyricsView: View {
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 16)
+        .padding(.vertical, 8)
     }
 
     private var unavailable: some View {
@@ -60,12 +61,20 @@ struct LyricsView: View {
                         // Dim upcoming lines hard, fade the passed ones gently.
                         let opacity = lineOpacity(index: index, activeIndex: activeIndex)
 
-                        Text(line.text.isEmpty ? "♪" : line.text)
-                            .font(isActive ? .title2.weight(.bold) : .title3)
-                            .foregroundStyle(isActive ? Color.primary : Color.primary.opacity(opacity))
-                            .lineLimit(2)
-                            .id(index)
-                            .opacity(line.isFiller ? 0.35 : 1)
+                        Button {
+                            player.seek(to: Double(line.timeMs) / 1000)
+                        } label: {
+                            Text(line.text.isEmpty ? "♪" : line.text)
+                                .font(isActive ? .title2.weight(.bold) : .title3)
+                                .foregroundStyle(isActive ? Color.carmen : Color.primary.opacity(opacity))
+                                .lineLimit(2)
+                                .multilineTextAlignment(.leading)
+                                .frame(maxWidth: .infinity, alignment: .leading)
+                                .id(index)
+                                .opacity(line.isFiller ? 0.35 : 1)
+                                .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
                     }
                 }
                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -100,14 +109,20 @@ struct LyricsView: View {
 
     // MARK: Unsynced
 
-    private func unsyncedBody(_ plain: String) -> some View {
+    private func unsyncedBody(_ plain: String, source: String?) -> some View {
         ScrollView {
-            Text(plain)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .lineSpacing(6)
-                .frame(maxWidth: .infinity, alignment: .leading)
-                .padding(.vertical, 8)
+            VStack(alignment: .leading, spacing: 14) {
+                Text(plain)
+                    .font(.title3)
+                    .lineSpacing(6)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                if let source, !source.isEmpty {
+                    Text("Lyrics: \(source)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.vertical, 8)
         }
     }
 }

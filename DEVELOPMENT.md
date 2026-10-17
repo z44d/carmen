@@ -536,6 +536,15 @@ Island) rendered by the `CarmenLiveActivity` widget extension
 (`ActivityConfiguration` UI in `ios/CarmenLiveActivity/`, data model in
 `ios/Shared/` compiled into both targets).
 
+Its feature set mirrors the web frontend: Home is a purely local feed
+(recent plays + suggestions harvested from each play's related list), the
+full player hosts Lyrics / Queue / Related panels plus an interactive
+drag-to-expand sheet, songs can be favorited (heart) and **downloaded for
+offline** (audio + artwork + lyrics per song), `/stream` responses are
+disk-cached, the accent color is user-selectable (Settings → Appearance),
+and Apple-catalogue **animated artwork** plays on the lock screen (iOS 26)
+and in the player when available.
+
 ```bash
 cd ios
 xcodegen generate          # (re)generate Carmen.xcodeproj — gitignored, never hand-edit

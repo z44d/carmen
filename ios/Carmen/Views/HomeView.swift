@@ -1,60 +1,119 @@
 //
 //  HomeView.swift
-//  Carmen — the Home tab: recently played tracks from the on-device library,
-//  then the server's home feed rows as horizontal card shelves.
+//  Carmen — the Home tab, mirroring the web client's personal feed.
+//
+//  Entirely local, zero network: the 10 most recently played songs plus up
+//  to 100 suggestions harvested from the related lists of everything the
+//  user plays (shuffled on every refresh). The curated YouTube Music rows
+//  the server offers are deliberately not shown — the frontend dropped them
+//  for the same reason: the personal feed is all this page shows.
 //
 
 import SwiftUI
 
 struct HomeView: View {
-    @Environment(SettingsStore.self) private var settings
     @Environment(LibraryStore.self) private var library
     @Environment(Player.self) private var player
 
-    @State private var sections: [HomeSection]?
-    @State private var errorMessage: String?
+    /// Snapshots — captured on appear and refresh (frontend `raw`
+    /// semantics): what's on screen keeps its order until the user refreshes.
+    @State private var recentSnapshot: [Track] = []
+    @State private var suggestionSnapshot: [Track] = []
+    @State private var visibleSuggestions = 12
+    @State private var refreshing = false
+
+    private let columns = [GridItem(.adaptive(minimum: 150), spacing: 16)]
 
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
-                if !library.recents.isEmpty {
+            VStack(alignment: .leading, spacing: 24) {
+                if refreshing {
+                    ProgressView()
+                        .padding(.horizontal)
+                }
+
+                if !recentSnapshot.isEmpty {
                     recentlyPlayed
                 }
-                if let sections {
-                    ForEach(sections) { section in
-                        if !section.contents.isEmpty {
-                            feedRow(section)
-                        }
-                    }
-                } else if let errorMessage {
-                    ErrorState(message: errorMessage) {
-                        Task { await load() }
-                    }
-                } else {
-                    LoadingState()
+                if !suggestionSnapshot.isEmpty {
+                    suggestedForYou
+                }
+                if !refreshing, recentSnapshot.isEmpty, suggestionSnapshot.isEmpty {
+                    EmptyState(
+                        title: "Nothing here yet",
+                        hint: "Songs you play show up here: your last 10 plays, plus up to 100 suggestions gathered from their related songs."
+                    )
                 }
             }
             .padding(.vertical, 8)
         }
         .navigationTitle("Home")
         .navigationBarTitleDisplayMode(.large)
+        .toolbar {
+            ToolbarItem(placement: .topBarTrailing) {
+                Button {
+                    Task { await refresh() }
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                }
+                .accessibilityLabel("Refresh")
+            }
+        }
         .refreshable {
-            await load()
+            await refresh()
         }
         .task {
-            await load()
+            snapshot()
         }
+    }
+
+    // MARK: Data
+
+    /// Frontend snapshot(): recents as-is, suggestions shuffled.
+    private func snapshot() {
+        recentSnapshot = Array(library.recents.prefix(10))
+        suggestionSnapshot = library.suggestions.shuffled()
+        visibleSuggestions = 12
+    }
+
+    private func refresh() async {
+        refreshing = true
+        snapshot()
+        // Minimum spinner so the control feels like it actually worked.
+        try? await Task.sleep(for: .milliseconds(400))
+        refreshing = false
     }
 
     // MARK: Recently played
 
     private var recentlyPlayed: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: "Recently Played")
+            HStack(spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Recently Played")
+                        .font(.title3.weight(.bold))
+                    Text("Last \(recentSnapshot.count) of 10 songs")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Button {
+                    player.play(recentSnapshot)
+                } label: {
+                    Image(systemName: "play.fill")
+                        .font(.subheadline)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Play recent songs")
+            }
+            .padding(.horizontal)
+
             ScrollView(.horizontal, showsIndicators: false) {
                 HStack(alignment: .top, spacing: 14) {
-                    ForEach(library.recents) { track in
-                        RecentTile(track: track, context: library.recents)
+                    ForEach(recentSnapshot) { track in
+                        TrackTile(track: track, context: recentSnapshot, width: 132)
                     }
                 }
                 .padding(.horizontal)
@@ -62,67 +121,66 @@ struct HomeView: View {
         }
     }
 
-    // MARK: Feed rows
+    // MARK: Suggested for you
 
-    private func feedRow(_ section: HomeSection) -> some View {
+    private var suggestedForYou: some View {
         VStack(alignment: .leading, spacing: 12) {
-            SectionHeader(title: section.title)
-            ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 14) {
-                    ForEach(section.contents) { card in
-                        CardTile(card: card, siblings: section.contents, width: 150)
-                    }
+            HStack(alignment: .top, spacing: 8) {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text("Suggested for you")
+                        .font(.title3.weight(.bold))
+                    Text("\(suggestionSnapshot.count) songs gathered from songs you play")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
-                .padding(.horizontal)
+                Spacer()
+                Button {
+                    player.shuffle = true
+                    player.play(suggestionSnapshot.shuffled())
+                } label: {
+                    Image(systemName: "shuffle")
+                        .font(.subheadline)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Shuffle all")
+
+                Button {
+                    library.reshuffleSuggestions()
+                    snapshot()
+                } label: {
+                    Image(systemName: "arrow.triangle.2.circlepath")
+                        .font(.subheadline)
+                        .frame(width: 32, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Re-shuffle")
             }
+            .padding(.horizontal)
+
+            LazyVGrid(columns: columns, spacing: 16) {
+                ForEach(
+                    Array(suggestionSnapshot.prefix(visibleSuggestions).enumerated()),
+                    id: \.offset
+                ) { index, track in
+                    TrackTile(track: track, context: suggestionContext(for: track))
+                        .onAppear {
+                            // Prefetch the next page before the user hits it.
+                            if index >= visibleSuggestions - 6 { visibleSuggestions += 12 }
+                        }
+                }
+            }
+            .padding(.horizontal)
         }
     }
 
-    // MARK: Loading
-
-    private func load() async {
-        errorMessage = nil
-        do {
-            sections = try await API(baseURL: settings.apiBaseURL).home(limit: 3)
-        } catch is CancellationError {
-            // Superseded — the view disappeared or a newer task started.
-        } catch {
-            errorMessage = error.localizedDescription
-        }
-    }
-}
-
-/// One tile of the "Recently Played" row — artwork, title, artist; tapping
-/// plays the track with the rest of the recents queued behind it.
-private struct RecentTile: View {
-    let track: Track
-    var context: [Track] = []
-
-    @Environment(Player.self) private var player
-
-    var body: some View {
-        Button {
-            player.play(track, queue: context)
-        } label: {
-            VStack(alignment: .leading, spacing: 6) {
-                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 8)
-                    .frame(width: 140, height: 140)
-                HStack(spacing: 4) {
-                    Text(track.title)
-                        .font(.footnote.weight(.semibold))
-                        .lineLimit(1)
-                    if track.isExplicit {
-                        ExplicitBadge()
-                    }
-                }
-                Text(track.artistLine)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-            }
-            .frame(width: 140, alignment: .leading)
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
+    /// Frontend playSuggestion(): `[tapped] + (recents + shuffled suggestions
+    /// minus the tapped track)`.
+    private func suggestionContext(for tapped: Track) -> [Track] {
+        var rest = recentSnapshot + suggestionSnapshot.shuffled()
+        rest.removeAll { $0.videoId == tapped.videoId }
+        return [tapped] + rest
     }
 }
