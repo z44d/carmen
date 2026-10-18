@@ -24,7 +24,7 @@ enum ArtworkPalette {
     /// Pixels at or above this alpha are cover; below it is background.
     private static let minAlpha = 200
     /// `max - min` channel spread at which a pixel counts as coloured.
-    private static let chromaMin = 24
+    private static let chromaMin = 24.0
     /// Below this share of coloured pixels the cover reads as black/grey.
     private static let colorfulMin = 0.12
     /// Bucket granularity: the top 4 bits of each channel → 4096 buckets.
