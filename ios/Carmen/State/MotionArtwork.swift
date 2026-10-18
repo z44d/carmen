@@ -45,7 +45,7 @@ enum MotionArtwork {
     /// Start the download now, answer later — the Player calls this as soon
     /// as a motion URL resolves so the file is ready before playback starts.
     static func prefetch(urlString: String, id: String) {
-        _ = localFile(urlString: urlString, id: id)
+        Task { _ = await localFile(urlString: urlString, id: id) }
     }
 
     /// Local file URL for a motion artwork mp4, downloading it if needed.
@@ -66,9 +66,8 @@ enum MotionArtwork {
         let task = Task<URL?, Never> { [remote, file] () -> URL? in
             do {
                 let (data, response) = try await session.data(from: remote)
-                guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode),
-                    !data.isEmpty
-                else {
+                let http = response as? HTTPURLResponse
+                guard let http, (200...299).contains(http.statusCode), !data.isEmpty else {
                     DebugLog.log("motion", "download failed (\(http?.statusCode ?? 0)): \(remote.lastPathComponent)")
                     return nil
                 }
