@@ -1,7 +1,7 @@
 //
 //  RootView.swift
-//  Carmen — the four-tab shell (Home / Search / Library / Settings), the
-//  floating mini player and the full Now Playing overlay.
+//  Carmen — the five-tab shell (Home / Search / Queue / Library / Settings),
+//  the floating mini player and the full Now Playing overlay.
 //
 //  Each tab owns its own NavigationStack; the mini player floats above the
 //  tab bar. The full player is an overlay driven by the Player's
@@ -16,8 +16,10 @@ struct RootView: View {
 
     @State private var selectedTab: Tab = .home
 
+    /// Matches the frontend's drawer order: Home, Search, Queue, Library,
+    /// Settings — the queue is navigation, not player chrome.
     enum Tab: Hashable {
-        case home, search, library, settings
+        case home, search, queue, library, settings
     }
 
     var body: some View {
@@ -36,6 +38,13 @@ struct RootView: View {
                 }
                 .tabItem { Label("Search", systemImage: "magnifyingglass") }
                 .tag(Tab.search)
+
+                NavigationStack {
+                    QueueTabView()
+                        .carmenDestinations()
+                }
+                .tabItem { Label("Queue", systemImage: "list.bullet") }
+                .tag(Tab.queue)
 
                 NavigationStack {
                     LibraryView()
@@ -76,7 +85,9 @@ struct RootView: View {
         }
         // Chosen accent (Settings → Appearance). Applied here rather than in
         // the App scene so the @Observable read re-renders every surface live.
-        .tint(Color.carmen)
+        // A near-white accent flips system controls to black ink so switches
+        // don't vanish on the app's light surfaces.
+        .tint(Color.carmenControlTint)
         .animation(.snappy(duration: 0.25), value: player.hasQueue)
         // Stream failure banner — sits above everything while the player is
         // stuck; Retry re-attempts, ✕ just dismisses it.

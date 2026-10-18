@@ -25,6 +25,20 @@ struct SearchView: View {
     @State private var suggestions: [String] = []
     @State private var errorMessage: String?
     @State private var isSearching = false
+    /// Type filter, frontend parity: same chips, same default (Songs), and
+    /// it survives leaving the tab like the web client's `?filter=`.
+    @AppStorage("carmen.search.filter") private var filter = "songs"
+
+    /// The frontend's chip row — `All` is the empty id the backend treats
+    /// as "no filter".
+    private static let filters: [(id: String, label: String)] = [
+        ("all", "All"),
+        ("songs", "Songs"),
+        ("videos", "Videos"),
+        ("albums", "Albums"),
+        ("artists", "Artists"),
+        ("playlists", "Playlists"),
+    ]
 
     private var trimmed: String {
         query.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -41,7 +55,12 @@ struct SearchView: View {
                     }
                 } else if let results {
                     if results.isEmpty {
-                        EmptyState(title: "No Results", hint: "Try a different search.")
+                        EmptyState(
+                            title: "No Results",
+                            hint: filter == "all"
+                                ? "Try a different search."
+                                : "Check the spelling or try another filter."
+                        )
                     } else {
                         resultsContent(results)
                     }
@@ -58,9 +77,41 @@ struct SearchView: View {
             placement: .navigationBarDrawer(displayMode: .always),
             prompt: "Songs, artists, albums…"
         )
-        .task(id: query) {
+        .task(id: "\(trimmed)#\(filter)") {
             await runSearch()
         }
+    }
+
+    // MARK: Type filter (chips)
+
+    private var filterBar: some View {
+        ScrollView(.horizontal, showsIndicators: false) {
+            HStack(spacing: 8) {
+                ForEach(Self.filters, id: \.id) { option in
+                    Button {
+                        filter = option.id
+                    } label: {
+                        Text(option.label)
+                            .font(.subheadline.weight(.medium))
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 7)
+                            .background(Capsule().fill(chipFill(option.id)))
+                            .foregroundStyle(chipInk(option.id))
+                            .contentShape(Capsule())
+                    }
+                    .buttonStyle(.plain)
+                }
+            }
+            .padding(.horizontal)
+        }
+    }
+
+    private func chipFill(_ id: String) -> Color {
+        filter == id ? Color.carmen : Color(.secondarySystemBackground)
+    }
+
+    private func chipInk(_ id: String) -> Color {
+        filter == id ? Color.carmenOnAccent : Color.secondary
     }
 
     // MARK: Search history (empty query)
@@ -114,6 +165,7 @@ struct SearchView: View {
             ProgressView()
                 .frame(maxWidth: .infinity)
         }
+        filterBar
         if !suggestions.isEmpty {
             suggestionSection
         }
@@ -232,8 +284,9 @@ struct SearchView: View {
 
     private func fetch(_ term: String) async {
         let api = API(baseURL: settings.apiBaseURL)
+        let activeFilter = filter
         do {
-            let found = try await api.search(term)
+            let found = try await api.search(term, filter: activeFilter, limit: 100)
             if Task.isCancelled { return }
             results = found
             isSearching = false

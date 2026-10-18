@@ -69,6 +69,25 @@ final class DownloadActivityController {
                 self?.lastStates[videoId] = nil
             }
         }
+        // The cover rides *inside* the state (the Lock Screen can't fetch it
+        // itself) — build it once and push it as soon as it exists.
+        Task { [weak self] in
+            let thumb = await ArtworkThumbCache.shared.prepare(for: track)
+            self?.attachThumb(videoId: videoId, thumb: thumb)
+        }
+    }
+
+    /// Push a ready-made artwork thumb into an already-started card.
+    private func attachThumb(videoId: String, thumb: String?) {
+        guard let thumb, var state = lastStates[videoId] else { return }
+        guard state.artworkData != thumb else { return }
+        state.artworkData = thumb
+        // Always remember it — if the card is still being requested, the
+        // next byte-progress update carries it instead.
+        lastStates[videoId] = state
+        if let activity = activities[videoId] {
+            Task { await activity.update(using: state) }
+        }
     }
 
     /// Byte progress from the background session (throttled by the store).

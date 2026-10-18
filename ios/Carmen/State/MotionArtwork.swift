@@ -64,22 +64,36 @@ enum MotionArtwork {
             return await existing.value
         }
         let task = Task<URL?, Never> { [remote, file] () -> URL? in
-            do {
-                let (data, response) = try await session.data(from: remote)
-                let http = response as? HTTPURLResponse
-                guard let http, (200...299).contains(http.statusCode), !data.isEmpty else {
-                    DebugLog.log("motion", "download failed (\(http?.statusCode ?? 0)): \(remote.lastPathComponent)")
-                    return nil
+            // Apple's CDN through a flaky link drops connections mid-transfer
+            // ("The network connection was lost") — a couple of short retries
+            // turn that into a slow download instead of no motion art.
+            for attempt in 0..<3 {
+                do {
+                    let (data, response) = try await session.data(from: remote)
+                    let http = response as? HTTPURLResponse
+                    guard let http, (200...299).contains(http.statusCode), !data.isEmpty else {
+                        DebugLog.log(
+                            "motion",
+                            "download failed (\(http?.statusCode ?? 0)): \(remote.lastPathComponent)"
+                        )
+                        break
+                    }
+                    try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
+                    try data.write(to: file, options: .atomic)
+                    prune()
+                    DebugLog.log("motion", "saved \(file.lastPathComponent) (\(data.count / 1024) KB)")
+                    return file
+                } catch {
+                    let last = attempt == 2
+                    DebugLog.log(
+                        "motion",
+                        "download error: \(error.localizedDescription)\(last ? "" : " — retry \(attempt + 1)")"
+                    )
+                    if last { return nil }
+                    try? await Task.sleep(for: .seconds(Double(attempt + 1)))
                 }
-                try? fileManager.createDirectory(at: directory, withIntermediateDirectories: true)
-                try data.write(to: file, options: .atomic)
-                prune()
-                DebugLog.log("motion", "saved \(file.lastPathComponent) (\(data.count / 1024) KB)")
-                return file
-            } catch {
-                DebugLog.log("motion", "download error: \(error.localizedDescription)")
-                return nil
             }
+            return nil
         }
         inFlight[file.lastPathComponent] = task
         lock.unlock()

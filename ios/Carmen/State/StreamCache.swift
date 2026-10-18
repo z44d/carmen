@@ -256,6 +256,12 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
 }
 
 /// Fulfils one `AVAssetResourceLoadingRequest` from cache + ranged fetches.
+///
+/// Mobile connections stall and drop; AVPlayer answers a loader that goes
+/// quiet with "The request timed out" and fails the whole item. So every
+/// request here is raced against a short deadline and re-requested on the
+/// spot (resuming at the byte it stopped on) — the gap is walked over, not
+/// surfaced as a broken song.
 private struct StreamLoad {
     /// 60s between chunks: the first byte goes through the server's cold
     /// yt-dlp resolution, which can sit for half a minute before answering;
@@ -267,25 +273,57 @@ private struct StreamLoad {
         return URLSession(configuration: configuration)
     }()
 
+    /// Wall clock for one transfer attempt. Comfortably under the point
+    /// where AVPlayer gives up on the loading request, so a stalled
+    /// connection is re-requested while the player is still waiting.
+    private static let attemptDeadline: Double = 8
+    /// The cold resolution behind the very first request can idle much
+    /// longer before the server even answers — give it its own, bigger leash.
+    private static let probeDeadline: Double = 30
+    /// Re-requests per gap, and per loading request, before giving up.
+    private static let maxFetchAttempts = 4
+    private static let maxLoadAttempts = 3
+
     /// Serve cached runs in ≤4 MB slabs — small enough to respond promptly,
     /// large enough that sequential playback is a handful of reads.
-    private static let slabSize = 4_194_304
+    /// (fileprivate: the batching `SlabTransfer` below flushes at it too.)
+    fileprivate static let slabSize = 4_194_304
 
     let cache: StreamCache
     let request: AVAssetResourceLoadingRequest
     let remote: URL
 
     func run() async {
-        do {
-            try await load()
-            if !request.isCancelled { request.finishLoading() }
-        } catch is CancellationError {
-            // AVPlayer walked away — neither respond nor finish.
-        } catch let error as URLError where error.code == .cancelled {
-            // Same: cancelled underneath us.
-        } catch {
-            DebugLog.log("stream", "\(remote.lastPathComponent) load failed: \(error.localizedDescription)")
-            if !request.isCancelled { request.finishLoading(with: error) }
+        var attempt = 0
+        while true {
+            do {
+                try await load()
+                if !request.isCancelled { request.finishLoading() }
+                return
+            } catch is CancellationError {
+                // AVPlayer walked away — neither respond nor finish.
+                return
+            } catch let error as URLError where error.code == .cancelled {
+                // Same: cancelled underneath us.
+                return
+            } catch {
+                // `load()` resumes from `dataRequest.currentOffset`, so a
+                // retry never re-sends bytes AVPlayer already took.
+                attempt += 1
+                guard attempt < Self.maxLoadAttempts, !Task.isCancelled, !request.isCancelled else {
+                    DebugLog.log(
+                        "stream",
+                        "\(remote.lastPathComponent) load failed: \(error.localizedDescription)"
+                    )
+                    if !request.isCancelled { request.finishLoading(with: error) }
+                    return
+                }
+                DebugLog.log(
+                    "stream",
+                    "\(remote.lastPathComponent) load attempt \(attempt) — \(error.localizedDescription)"
+                )
+                try? await Task.sleep(for: .milliseconds(400 * attempt))
+            }
         }
     }
 
@@ -342,7 +380,7 @@ private struct StreamLoad {
             } else if progressed {
                 break  // object ended short of the window — everything it has was sent
             } else {
-                throw streamError("The stream ended before any data arrived.")
+                throw Self.streamError("The stream ended before any data arrived.")
             }
         }
     }
@@ -355,7 +393,7 @@ private struct StreamLoad {
         urlRequest.setValue("bytes=0-0", forHTTPHeaderField: "Range")
         let (data, response) = try await Self.session.data(for: urlRequest)
         guard let http = response as? HTTPURLResponse else {
-            throw streamError("The stream returned no response.")
+            throw Self.streamError("The stream returned no response.")
         }
         DebugLog.log(
             "stream",
@@ -369,7 +407,7 @@ private struct StreamLoad {
             return StreamCache.Snapshot(total: total, mime: http.mimeType)
         }
         guard (200...299).contains(http.statusCode) else {
-            throw streamError(Self.detail(from: data) ?? "The stream failed (\(http.statusCode)).")
+            throw Self.streamError(Self.detail(from: data) ?? "The stream failed (\(http.statusCode)).")
         }
         // No range support: the body would be the whole object — only trust
         // the length when the server actually declared one.
@@ -380,10 +418,47 @@ private struct StreamLoad {
     /// Range GET for `[start, stop)`; writes every byte to the cache and hands
     /// the slice that overlaps `window` to `onChunk`. Returns how far the
     /// window advanced (0 = the object had nothing left to give).
+    ///
+    /// A stalled attempt is torn down and re-requested from the byte it
+    /// reached, so the bytes AVPlayer already took are never sent twice.
     private func fetch(
         start: Int64, stop: Int64, window: Range<Int64>,
-        onChunk: (Data) -> Void
+        onChunk: @escaping (Data) -> Void
     ) async throws -> Int64 {
+        let transfer = SlabTransfer(cache: cache, remote: remote, window: window, onChunk: onChunk)
+        var requestStart = start
+        var attempt = 0
+        while true {
+            // Snapshot for the @Sendable deadline closure.
+            let attemptStart = requestStart
+            transfer.begin(at: attemptStart)
+            do {
+                try await Self.withDeadline(Self.attemptDeadline) {
+                    try await Self.fetchOnce(remote: remote, from: attemptStart, stop: stop, into: transfer)
+                }
+                return transfer.delivered
+            } catch {
+                if Task.isCancelled { throw CancellationError() }
+                // Bank whatever arrived before the stall — the retry resumes
+                // exactly there instead of refetching it.
+                transfer.flush()
+                let resumeAt = transfer.absolute
+                attempt += 1
+                guard attempt < Self.maxFetchAttempts, resumeAt < stop else { throw error }
+                requestStart = resumeAt
+                DebugLog.log(
+                    "stream",
+                    "fetch stalled at \(requestStart): \(error.localizedDescription) — retry \(attempt)"
+                )
+                try? await Task.sleep(for: .milliseconds(300 * attempt))
+            }
+        }
+    }
+
+    /// One ranged request, raced by `fetch` against the attempt deadline.
+    private static func fetchOnce(
+        remote: URL, from start: Int64, stop: Int64, into transfer: SlabTransfer
+    ) async throws {
         var urlRequest = URLRequest(url: remote)
         if stop == Int64.max {
             urlRequest.setValue("bytes=\(start)-", forHTTPHeaderField: "Range")
@@ -391,54 +466,49 @@ private struct StreamLoad {
             urlRequest.setValue("bytes=\(start)-\(stop - 1)", forHTTPHeaderField: "Range")
         }
 
-        let (bytes, response) = try await Self.session.bytes(for: urlRequest)
+        let (bytes, response) = try await session.bytes(for: urlRequest)
         guard let http = response as? HTTPURLResponse else {
             throw streamError("The stream returned no response.")
         }
         DebugLog.log("stream", "fetch \(urlRequest.value(forHTTPHeaderField: "Range") ?? "") → \(http.statusCode)")
-        if http.statusCode == 416 { return 0 }  // asked past the end — caller wraps up
+        if http.statusCode == 416 { return }  // asked past the end — caller wraps up
         guard (200...299).contains(http.statusCode) else {
-            let body = await Self.collectBody(bytes)
-            throw streamError(Self.detail(from: body) ?? "The stream failed (\(http.statusCode)).")
+            let body = await collectBody(bytes)
+            throw streamError(detail(from: body) ?? "The stream failed (\(http.statusCode)).")
         }
 
         // 206 bodies start at `start`; a bare 200 starts at 0 (no ranges).
-        let bodyStart = http.statusCode == 206 ? start : 0
-        var absolute = bodyStart
-        var delivered: Int64 = 0
+        transfer.begin(at: http.statusCode == 206 ? start : 0)
         // `AsyncBytes` yields raw bytes — batch them into slab-sized chunks.
-        var pending = Data()
-
-        func flush() {
-            guard !pending.isEmpty else { return }
-            let chunk = pending
-            pending.removeAll(keepingCapacity: true)
-            cache.write(remote, offset: absolute, data: chunk)
-            let chunkStart = absolute
-            absolute += Int64(chunk.count)
-
-            let overlapStart = max(chunkStart, window.lowerBound)
-            let overlapEnd = min(absolute, window.upperBound)
-            if overlapStart < overlapEnd {
-                let lower = Int(overlapStart - chunkStart)
-                let upper = Int(overlapEnd - chunkStart)
-                onChunk(chunk.subdata(in: lower..<upper))
-                delivered += overlapEnd - overlapStart
-            }
-        }
-
         for try await byte in bytes {
             if Task.isCancelled { throw CancellationError() }
-            pending.append(byte)
-            if pending.count >= Self.slabSize { flush() }
+            transfer.append(byte)
         }
-        flush()
-        return delivered
+        transfer.flush()
+    }
+
+    /// Run `operation` against a wall-clock deadline. Whichever finishes
+    /// first wins; the loser is cancelled (which tears down its URLSession
+    /// task). A timeout surfaces as `URLError(.timedOut)`.
+    private static func withDeadline(
+        _ seconds: Double, _ operation: @escaping @Sendable () async throws -> Void
+    ) async throws {
+        try await withThrowingTaskGroup(of: Void.self) { group in
+            group.addTask { try await operation() }
+            group.addTask {
+                try await Task.sleep(nanoseconds: UInt64(max(0.5, seconds) * 1_000_000_000))
+                throw URLError(.timedOut)
+            }
+            defer { group.cancelAll() }
+            // nil would mean an empty group — impossible here, but fail safe.
+            let completed = try await group.next()
+            if completed == nil { throw URLError(.timedOut) }
+        }
     }
 
     // MARK: Error payloads
 
-    private func streamError(_ message: String) -> NSError {
+    private static func streamError(_ message: String) -> NSError {
         NSError(domain: "carmen.stream", code: 1, userInfo: [NSLocalizedDescriptionKey: message])
     }
 
@@ -458,5 +528,57 @@ private struct StreamLoad {
             return nil
         }
         return detail
+    }
+}
+
+/// The bytes of one gap, carried across re-requests: how far the body got
+/// (`absolute`), how much of that landed inside the caller's window
+/// (`delivered`), and the not-yet-flushed batch. `AsyncBytes` hands back one
+/// byte at a time, so batching here is what keeps the cache and AVPlayer fed.
+private final class SlabTransfer: @unchecked Sendable {
+    private let cache: StreamCache
+    private let remote: URL
+    private let window: Range<Int64>
+    private let onChunk: (Data) -> Void
+    private var pending = Data()
+
+    private(set) var absolute: Int64 = 0
+    private(set) var delivered: Int64 = 0
+
+    init(cache: StreamCache, remote: URL, window: Range<Int64>, onChunk: @escaping (Data) -> Void) {
+        self.cache = cache
+        self.remote = remote
+        self.window = window
+        self.onChunk = onChunk
+    }
+
+    /// Start (or restart) the body at `offset`, dropping the partial batch.
+    func begin(at offset: Int64) {
+        absolute = offset
+        pending.removeAll(keepingCapacity: true)
+    }
+
+    func append(_ byte: UInt8) {
+        pending.append(byte)
+        if pending.count >= StreamLoad.slabSize { flush() }
+    }
+
+    /// Write the batch to disk and hand the window's slice to the loader.
+    func flush() {
+        guard !pending.isEmpty else { return }
+        let chunk = pending
+        pending.removeAll(keepingCapacity: true)
+        cache.write(remote, offset: absolute, data: chunk)
+        let chunkStart = absolute
+        absolute += Int64(chunk.count)
+
+        let overlapStart = max(chunkStart, window.lowerBound)
+        let overlapEnd = min(absolute, window.upperBound)
+        if overlapStart < overlapEnd {
+            let lower = Int(overlapStart - chunkStart)
+            let upper = Int(overlapEnd - chunkStart)
+            onChunk(chunk.subdata(in: lower..<upper))
+            delivered += overlapEnd - overlapStart
+        }
     }
 }

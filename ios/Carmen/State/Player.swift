@@ -125,6 +125,12 @@ final class Player {
     private var lastResumeSave: Date = .distantPast
     private var lastNowPlayingSync: Date = .distantPast
     private var streamBroken = false
+    /// Silent restarts spent on a dead connection — the error banner only
+    /// shows up once these run out.
+    private var streamAutoRetries = 0
+    /// Set by the scheduled auto-retry so `startCurrent` doesn't clear the
+    /// counter it is about to spend.
+    private var pendingAutoRetry = false
     /// videoId → center-cropped square artwork for the media session.
     private var artworkCache: [String: UIImage] = [:]
     private var artworkPending: Set<String> = []
@@ -175,8 +181,23 @@ final class Player {
         _repeatModeRaw = UserDefaults.standard.string(forKey: Self.repeatModeKey) ?? RepeatMode.off.rawValue
         configureAudioSession()
         observePlayback()
+        observeAppLifecycle()
+        startActivityPump()
         configureRemoteCommands()
         restorePersistedQueue()
+    }
+
+    /// One flush of everything the OS surfaces read, right as the app leaves
+    /// the foreground — the Live Activity is all the user sees from there.
+    private func observeAppLifecycle() {
+        NotificationCenter.default.addObserver(
+            forName: UIApplication.willResignActiveNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated {
+                self?.syncNowPlaying()
+                self?.pushLiveActivity(force: true)
+            }
+        }
     }
 
     // MARK: - Presentation
@@ -470,6 +491,8 @@ final class Player {
         guard let track = current else { return }
         errorMessage = nil
         streamBroken = false
+        if !pendingAutoRetry { streamAutoRetries = 0 }
+        pendingAutoRetry = false
         isBuffering = true
         lyrics = nil
         currentTime = max(0, seconds)
@@ -486,6 +509,13 @@ final class Player {
             "player",
             "start \(track.videoId) “\(track.title)” (offline: \(DownloadsStore.shared.isDownloaded(track.videoId)))"
         )
+        // Build the Live Activity's embedded cover once, then push it so the
+        // Lock Screen card never comes up without its thumb.
+        Task { [weak self] in
+            guard await ArtworkThumbCache.shared.prepare(for: track) != nil else { return }
+            guard let self, self.current?.videoId == track.videoId else { return }
+            self.pushLiveActivity(force: true)
+        }
 
         // Source chain: downloaded file → `carmen-cache://` (disk cache) →
         // failure. A saved song never touches the network again.
@@ -545,6 +575,22 @@ final class Player {
         isBuffering = false
         syncNowPlaying()
         DebugLog.log("player", "stream broken \(track.videoId): \(detail)")
+
+        // A mobile connection that drops mid-transfer comes straight back —
+        // restart on our own a couple of times before the user sees anything.
+        if Self.isTransientStreamFailure(detail), streamAutoRetries < 2 {
+            streamAutoRetries += 1
+            let resumeAt = currentTime
+            DebugLog.log("player", "auto-retry \(track.videoId) (\(streamAutoRetries))")
+            Task { [weak self] in
+                try? await Task.sleep(for: .seconds(1.5))
+                guard let self, self.current?.videoId == track.videoId else { return }
+                self.pendingAutoRetry = true
+                self.startCurrent(resumeAt: resumeAt)
+            }
+            return
+        }
+
         // Probe the endpoint so the user sees the server's actual reason.
         Task { [weak self] in
             guard let self else { return }
@@ -554,6 +600,18 @@ final class Player {
             DebugLog.log("player", "stream probe \(track.videoId): \(reason)")
             self.errorMessage = "Can't play “\(track.title)” — \(reason)"
         }
+    }
+
+    /// Network-shaped failures worth silently re-trying: a stalled mobile
+    /// connection is indistinguishable from a dead server to AVPlayer, and it
+    /// clears on its own far more often than not.
+    private static func isTransientStreamFailure(_ detail: String) -> Bool {
+        let text = detail.lowercased()
+        return text.contains("timed out")
+            || text.contains("connection was lost")
+            || text.contains("cannot connect")
+            || text.contains("not connected to the internet")
+            || text.contains("network")
     }
 
     /// Connectivity returned and the current track never started (or died
@@ -627,6 +685,21 @@ final class Player {
                 if Date().timeIntervalSince(self.lastResumeSave) > 5 {
                     self.persistResume()
                 }
+            }
+        }
+    }
+
+    /// A 1 s tick for the lyric Live Activity, independent of AVPlayer's
+    /// time observer. That observer can go quiet (a stalled item, a
+    /// background hiccup) while playback is actually still rolling, and the
+    /// Lock Screen is the one surface the user watches the whole time.
+    private func startActivityPump() {
+        Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(1))
+                if Task.isCancelled { return }
+                guard let self, self.hasQueue, self.isPlaying else { continue }
+                self.pushLiveActivity(force: true)
             }
         }
     }
@@ -782,11 +855,16 @@ final class Player {
         var dict: [String: Any] = [
             MPMediaItemPropertyTitle: track.title,
             MPMediaItemPropertyArtist: track.artistLine,
-            MPMediaItemPropertyPlaybackDuration: duration,
             MPNowPlayingInfoPropertyElapsedPlaybackTime: currentTime,
             MPNowPlayingInfoPropertyPlaybackRate: isPlaying ? 1.0 : 0.0,
             MPNowPlayingInfoPropertyDefaultPlaybackRate: 1.0,
         ]
+        // A track whose length hasn't come back yet must not lock the session
+        // into a 0:00 total: the system shows "--:--" until real duration
+        // lands (which it does the moment the lyrics payload arrives).
+        if duration > 0 {
+            dict[MPMediaItemPropertyPlaybackDuration] = duration
+        }
         if !track.albumName.isEmpty {
             dict[MPMediaItemPropertyAlbumTitle] = track.albumName
         }
@@ -800,6 +878,10 @@ final class Player {
             dict = animatedArtwork(dict, track: track, motionURL: motionURL)
         }
         info.nowPlayingInfo = dict
+        // Connect the session the moment a song opens — the system then owns
+        // the transport and shows the real clock (or "--:--" while duration
+        // is still unknown) instead of waiting for the first time tick.
+        info.playbackState = isPlaying ? .playing : .paused
 
         // Kick the artwork fetch once per track; the cache is consulted on
         // every later sync so the square crop lands as soon as it exists.
@@ -1043,6 +1125,7 @@ final class Player {
             title: track.title,
             artist: track.artistLine,
             artworkURL: track.artwork ?? track.artworkAlt,
+            artworkData: ArtworkThumbCache.shared.cached(videoId: track.videoId),
             isPlaying: isPlaying,
             progress: progress,
             elapsed: currentTime,

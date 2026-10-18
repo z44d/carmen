@@ -40,8 +40,26 @@ extension Color {
 
     /// Ink for filled-accent surfaces (play button, FABs): stays readable on
     /// the near-white accents — the palette's "no colour here" answer too.
+    /// The hex reaches us as "#FFFFFF", so compare the *stripped* value.
     @MainActor static var carmenOnAccent: Color {
-        effectiveHex.uppercased() == "FFFFFF" ? .black.opacity(0.85) : .white
+        isNearWhite(effectiveHex) ? .black.opacity(0.85) : .white
+    }
+
+    /// Tint for system controls (switches, sliders, ProgressView): a white
+    /// accent would draw them in white-on-white, so near-white accents flip
+    /// to black ink there — same rule as the frontend gives white.
+    @MainActor static var carmenControlTint: Color {
+        isNearWhite(effectiveHex) ? .black : carmen
+    }
+
+    /// "#FFFFFF", "ffffff", "  #fefefe " … — all "close enough to white".
+    private static func isNearWhite(_ hex: String) -> Bool {
+        var value: UInt64 = 0
+        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
+        let red = (value >> 16) & 0xFF
+        let green = (value >> 8) & 0xFF
+        let blue = value & 0xFF
+        return red >= 235 && green >= 235 && blue >= 235
     }
 }
 

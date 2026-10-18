@@ -33,13 +33,11 @@ struct LyricLiveActivity: Widget {
             DynamicIsland {
                 // Expanded (Long Press)
                 DynamicIslandExpandedRegion(.leading) {
-                    ArtworkThumb(urlString: context.state.artworkURL)
+                    ArtworkThumb(urlString: context.state.artworkURL, data: context.state.artworkData)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
-                    Text(clock(context.state.elapsed))
-                        .font(.footnote.monospacedDigit())
-                        .foregroundStyle(.white.opacity(0.7))
+                    elapsedTime(context.state)
                         .padding(.trailing, 4)
                 }
                 DynamicIslandExpandedRegion(.center) {
@@ -78,13 +76,13 @@ struct LyricLiveActivity: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                ArtworkThumb(urlString: context.state.artworkURL, size: 24)
+                ArtworkThumb(urlString: context.state.artworkURL, data: context.state.artworkData, size: 24)
             } compactTrailing: {
                 HStack(spacing: 4) {
                     Image(systemName: context.state.isPlaying ? "waveform" : "pause.fill")
                         .font(.caption2)
                         .foregroundStyle(.white.opacity(0.85))
-                    Text(clock(context.state.elapsed))
+                    elapsedTime(context.state)
                         .font(.caption2.monospacedDigit())
                         .foregroundStyle(.white.opacity(0.65))
                 }
@@ -105,7 +103,7 @@ private struct LockScreenLyricView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                ArtworkThumb(urlString: state.artworkURL, size: 38)
+                ArtworkThumb(urlString: state.artworkURL, data: state.artworkData, size: 38)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(state.title)
                         .font(.subheadline.weight(.semibold))
@@ -146,26 +144,69 @@ private struct LockScreenLyricView: View {
 
 // MARK: - Shared bits
 
+/// 96 pt cover that renders from the bytes inside the state — the Lock
+/// Screen presentation can't fetch a remote image itself, so the URL is
+/// only the fallback path (e.g. an activity started by an older app).
 private struct ArtworkThumb: View {
     let urlString: String?
+    var data: String?
     var size: CGFloat = 40
 
+    private var embedded: UIImage? {
+        guard let data, let raw = Data(base64Encoded: data) else { return nil }
+        return UIImage(data: raw)
+    }
+
     var body: some View {
-        AsyncImage(url: urlString.flatMap(URL.init(string:))) { phase in
-            if case .success(let image) = phase {
-                image.resizable().scaledToFill()
+        Group {
+            if let embedded {
+                Image(uiImage: embedded)
+                    .resizable()
+                    .scaledToFill()
             } else {
-                ZStack {
-                    Rectangle().fill(.white.opacity(0.12))
-                    Image(systemName: "music.note")
-                        .font(.system(size: size * 0.45))
-                        .foregroundStyle(.white.opacity(0.6))
+                AsyncImage(url: urlString.flatMap(URL.init(string:))) { phase in
+                    if case .success(let image) = phase {
+                        image.resizable().scaledToFill()
+                    } else {
+                        placeholder
+                    }
                 }
             }
         }
         .frame(width: size, height: size)
         .clipShape(RoundedRectangle(cornerRadius: size > 30 ? 6 : 4, style: .continuous))
     }
+
+    private var placeholder: some View {
+        ZStack {
+            Rectangle().fill(.white.opacity(0.12))
+            Image(systemName: "music.note")
+                .font(.system(size: size * 0.45))
+                .foregroundStyle(.white.opacity(0.6))
+        }
+    }
+}
+
+/// Elapsed clock: counts on its own while playback is rolling, so the card
+/// doesn't freeze between ActivityKit updates (and never freezes when the
+/// app is suspended between them).
+private func elapsedTime(_ state: LyricActivityAttributes.ContentState) -> some View {
+    if state.isPlaying {
+        // Closed range anchored at "when playback started": SwiftUI
+        // re-renders the text every second on its own, counting up.
+        let anchor = Date().addingTimeInterval(-state.elapsed)
+        let until = anchor.addingTimeInterval(max(state.duration, state.elapsed + 60))
+        return AnyView(
+            Text(timerInterval: anchor...until, countsDown: false, showsHours: state.duration >= 3600)
+                .font(.footnote.monospacedDigit())
+                .foregroundStyle(.white.opacity(0.7))
+        )
+    }
+    return AnyView(
+        Text(clock(state.elapsed))
+            .font(.footnote.monospacedDigit())
+            .foregroundStyle(.white.opacity(0.7))
+    )
 }
 
 /// Thin progress bar — pink fill like Apple Music.
@@ -205,7 +246,7 @@ struct DownloadLiveActivity: Widget {
         } dynamicIsland: { context in
             DynamicIsland {
                 DynamicIslandExpandedRegion(.leading) {
-                    ArtworkThumb(urlString: context.state.artworkURL)
+                    ArtworkThumb(urlString: context.state.artworkURL, data: context.state.artworkData)
                         .padding(.leading, 4)
                 }
                 DynamicIslandExpandedRegion(.trailing) {
@@ -240,7 +281,7 @@ struct DownloadLiveActivity: Widget {
                     .padding(.horizontal, 4)
                 }
             } compactLeading: {
-                ArtworkThumb(urlString: context.state.artworkURL, size: 24)
+                ArtworkThumb(urlString: context.state.artworkURL, data: context.state.artworkData, size: 24)
             } compactTrailing: {
                 if context.state.isDone {
                     Image(systemName: "checkmark.circle.fill")
@@ -301,7 +342,7 @@ private struct LockScreenDownloadView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
             HStack(spacing: 10) {
-                ArtworkThumb(urlString: state.artworkURL, size: 38)
+                ArtworkThumb(urlString: state.artworkURL, data: state.artworkData, size: 38)
                 VStack(alignment: .leading, spacing: 1) {
                     Text(state.title.isEmpty ? "Downloading" : state.title)
                         .font(.subheadline.weight(.semibold))

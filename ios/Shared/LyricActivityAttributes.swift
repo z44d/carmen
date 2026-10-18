@@ -21,6 +21,9 @@ struct LyricActivityAttributes: ActivityAttributes {
         var artist: String
         /// Artwork URL, rendered by the widget with AsyncImage.
         var artworkURL: String?
+        /// The cover itself, downscaled and base64-encoded by the app — the
+        /// Lock Screen can't fetch a remote image reliably on its own.
+        var artworkData: String? = nil
         var isPlaying: Bool
         /// 0.0 … 1.0 through the track.
         var progress: Double

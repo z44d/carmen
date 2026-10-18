@@ -3,10 +3,10 @@
 //  Carmen — the floating now-playing bar above the tab bar.
 //
 //  Tapping (or dragging up) expands the full player; the trailing controls
-//  are the full transport — previous, play/pause, next and a queue button
-//  that opens the player straight into the Queue panel. A hairline progress
+//  are the full transport — previous, play/pause and next. A hairline progress
 //  rail rides the top edge and the play button carries the chosen accent —
-//  same chrome the frontend's PlayerBar shows.
+//  same chrome the frontend's PlayerBar shows. The queue has its own tab,
+//  next to Search.
 //
 
 import SwiftUI
@@ -78,18 +78,6 @@ struct MiniPlayer: View {
                 .buttonStyle(.plain)
                 .opacity(player.hasNext ? 1 : 0.35)
                 .accessibilityLabel("Next")
-
-                Button {
-                    player.openPlayer(panel: .queue)
-                } label: {
-                    Image(systemName: "list.bullet")
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
-                        .frame(width: 28, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Queue")
             }
             .padding(.horizontal, 12)
             .frame(height: 56)

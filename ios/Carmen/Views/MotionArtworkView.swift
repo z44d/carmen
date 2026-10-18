@@ -36,13 +36,19 @@ struct MotionArtworkView: View {
     var body: some View {
         ZStack {
             // Base layer: the cover itself — the loading state AND the
-            // no-motion-art state, in one.
+            // no-motion-art state, in one. It stays painted under the video
+            // for the whole ride, so the player always opens with a thumb.
             ArtworkView(url: staticURL, fallbackURL: staticFallbackURL, cornerRadius: 0)
 
             if let player {
                 MotionPlayerLayer(player: player)
             }
         }
+        // Square, always: the raw thumbnail is 16:9, and neither it nor the
+        // video layer may hand a landscape size to the sheet's layout before
+        // the crop happens.
+        .aspectRatio(1, contentMode: .fit)
+        .clipped()
         // Re-run when connectivity flips back (the mp4 fetch may have died offline).
         .task(id: "\(urlString)#\(NetworkMonitor.shared.generation)") {
             teardown()
@@ -90,6 +96,15 @@ private struct MotionPlayerLayer: UIViewRepresentable {
 
     func updateUIView(_ uiView: MotionLayerView, context: Context) {
         uiView.playerLayer.player = player
+    }
+
+    /// Take exactly what was proposed. A bare UIView answers size queries
+    /// with its *last* bounds, and feeding those back into the artwork's
+    /// aspect-ratio math is how the sheet ended up sized by a thumbnail's
+    /// landscape dimensions instead of the screen's.
+    func sizeThatFits(_ proposal: ProposedViewSize, uiView: MotionLayerView, context: Context) -> CGSize? {
+        guard let width = proposal.width, let height = proposal.height else { return nil }
+        return CGSize(width: width, height: height)
     }
 }
 

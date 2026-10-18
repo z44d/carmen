@@ -1,6 +1,7 @@
 //
 //  QueueView.swift
-//  Carmen — the "Up Next" panel shown inside the Now Playing screen.
+//  Carmen — the "Up Next" list: the Queue tab's screen and the Now Playing
+//  panel it is reused from.
 //
 //  Count header with shuffle/clear (mirrors the web client's NPQueue), the
 //  playing row on top, then upcoming rows with an explicit ✕ remove plus
@@ -8,6 +9,16 @@
 //
 
 import SwiftUI
+
+/// The Queue as a tab (frontend parity: the drawer lists Queue right after
+/// Search) — the same rows as the player's panel, under a large title.
+struct QueueTabView: View {
+    var body: some View {
+        QueuePanel()
+            .navigationTitle("Queue")
+            .navigationBarTitleDisplayMode(.large)
+    }
+}
 
 struct QueuePanel: View {
     @Environment(Player.self) private var player
@@ -17,6 +28,15 @@ struct QueuePanel: View {
     private var upcomingCount: Int { max(player.queue.count - upcomingStart, 0) }
 
     var body: some View {
+        if player.queue.isEmpty {
+            EmptyState(title: "Queue is Empty", hint: "Play a song to start building your queue.")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            queueList
+        }
+    }
+
+    private var queueList: some View {
         List {
             if let current = player.current {
                 Section("Playing Now") {

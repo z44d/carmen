@@ -16,8 +16,11 @@ struct DownloadActivityAttributes: ActivityAttributes {
     struct ContentState: Codable, Hashable, Sendable {
         var title: String
         var artist: String
-        /// Artwork URL, rendered by the widget with AsyncImage.
+        /// Artwork URL — fallback when `artworkData` is absent.
         var artworkURL: String?
+        /// The cover itself, downscaled and base64-encoded by the app — the
+        /// Lock Screen can't fetch a remote image reliably on its own.
+        var artworkData: String? = nil
         /// 0.0 … 1.0 of the audio bytes received.
         var progress: Double
         var receivedBytes: Int64

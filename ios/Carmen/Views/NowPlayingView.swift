@@ -6,10 +6,11 @@
 //  (`Player.expansion` drives the offset; dragging the header tracks the
 //  finger back down). Inside: adaptive artwork (motion video when the track
 //  has any, growing with the sheet), metadata with a favorite heart, the
-//  scrubber, transport with shuffle/repeat, and the Lyrics / Queue /
-//  Related action pill that swaps the content area for a panel with a
-//  compact card + playing bar above it — the web client's panel takeover,
-//  with the scrubber and transport always one glance away.
+//  scrubber, transport with shuffle/repeat, and the Lyrics / Related
+//  action pill that swaps the content area for a panel with a compact card +
+//  playing bar above it — the web client's panel takeover, with the scrubber
+//  and transport always one glance away. (The queue lives in its own tab,
+//  next to Search, like the frontend's drawer.)
 //
 //  Theming is ambient: the blurred cover fills the background and, when
 //  Settings → Appearance → Adaptive Accent is on, the cover's own colour
@@ -23,14 +24,13 @@
 import SwiftUI
 
 enum PlayerPanel: String, CaseIterable, Identifiable {
-    case lyrics, queue, related
+    case lyrics, related
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .lyrics: return "Lyrics"
-        case .queue: return "Queue"
         case .related: return "Related"
         }
     }
@@ -38,7 +38,6 @@ enum PlayerPanel: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .lyrics: return "text.quote"
-        case .queue: return "list.bullet"
         case .related: return "sparkles"
         }
     }
@@ -392,7 +391,8 @@ struct NowPlayingView: View {
 
     // MARK: Panels
 
-    /// The glass pill: Lyrics / Queue / Related cells + the download control.
+    /// The bottom pill — the mini bar's twin (same 56 pt height, same 16 pt
+    /// radius, same inset): Lyrics / Related cells + the download control.
     /// Tapping the active cell returns to the artwork view (frontend parity).
     private func actionBar(for track: Track) -> some View {
         HStack(spacing: 0) {
@@ -410,7 +410,6 @@ struct NowPlayingView: View {
                     }
                     .foregroundStyle(activePanel == panel ? Color.carmen : Color.secondary)
                     .frame(maxWidth: .infinity)
-                    .padding(.vertical, 8)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
@@ -418,10 +417,11 @@ struct NowPlayingView: View {
 
             DownloadButton(track: track, diameter: 20)
                 .frame(maxWidth: .infinity)
-                .padding(.vertical, 8)
         }
-        .glassCapsule()
-        .padding(.horizontal, 20)
+        .padding(.horizontal, 12)
+        .frame(height: 56)
+        .glassCard(cornerRadius: 16)
+        .padding(.horizontal, 8)
         .padding(.bottom, 6)
     }
 
@@ -481,7 +481,6 @@ struct NowPlayingView: View {
     private func panelContent(_ panel: PlayerPanel) -> some View {
         switch panel {
         case .lyrics: LyricsView()
-        case .queue: QueuePanel()
         case .related: RelatedPanel()
         }
     }

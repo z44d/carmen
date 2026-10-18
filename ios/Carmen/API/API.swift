@@ -134,9 +134,15 @@ struct API: Sendable {
     }
 
     /// Flat list of heterogeneous results; `category` on each item labels the
-    /// section it belongs to ("Top result", "Songs", "Albums", …).
-    func search(_ query: String, limit: Int = 20) async throws -> [MediaCard] {
-        try await get("/search", ["query": query, "limit": String(limit)])
+    /// section it belongs to ("Top result", "Songs", "Albums", …). `filter`
+    /// narrows the backend to one type — `songs`, `videos`, `albums`,
+    /// `artists`, `playlists` (nil/"" = everything, like `?filter=all`).
+    func search(_ query: String, filter: String? = nil, limit: Int = 100) async throws -> [MediaCard] {
+        var params: [String: String] = ["query": query, "limit": String(limit)]
+        if let filter, !filter.isEmpty, filter != "all" {
+            params["filter"] = filter
+        }
+        return try await get("/search", params)
     }
 
     func suggestions(_ query: String) async throws -> [String] {
