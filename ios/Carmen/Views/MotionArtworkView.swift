@@ -4,8 +4,15 @@
 //
 //  Plays a track's motion ("animated") cover — the same Apple-catalogue mp4
 //  the iOS 26 lock screen gets — looped and muted inside the Now Playing
-//  artwork tile. The file resolves through MotionArtwork's disk cache, so a
-//  second look never re-downloads.
+//  artwork tile. The file resolves through MotionArtwork's disk cache (which
+//  the Player prefetches the moment the motion URL resolves), so a second
+//  look never re-downloads.
+//
+//  The static cover stays painted underneath the video layer for the whole
+//  ride: while the mp4 downloads and — if it never arrives — permanently.
+//  The video layer fades in only once its first frame is decoded, so the
+//  tile never flashes black or shows a grey box. When connectivity returns,
+//  the whole thing retries (`NetworkMonitor.generation`).
 //
 //  Looping is done by hand (rewind on AVPlayerItemDidPlayToEndTime): the SDK
 //  has no AVPlayerItemLooper — only AVQueuePlayer item chains, which stall
@@ -19,31 +26,28 @@ import UIKit
 struct MotionArtworkView: View {
     let urlString: String
     let artworkID: String
+    /// The static cover painted under the video (primary, then fallback).
+    var staticURL: String?
+    var staticFallbackURL: String?
 
     @State private var player: AVPlayer?
     @State private var loopObserver: NSObjectProtocol?
-    @State private var failed = false
 
     var body: some View {
         ZStack {
+            // Base layer: the cover itself — the loading state AND the
+            // no-motion-art state, in one.
+            ArtworkView(url: staticURL, fallbackURL: staticFallbackURL, cornerRadius: 0)
+
             if let player {
                 MotionPlayerLayer(player: player)
-            } else if failed {
-                Rectangle().fill(Color(.secondarySystemFill))
-                Image(systemName: "music.note")
-                    .font(.system(size: 24, weight: .semibold))
-                    .foregroundStyle(.secondary)
-            } else {
-                // First-frame stand-in while the mp4 downloads.
-                Rectangle().fill(Color(.secondarySystemFill))
-                ProgressView().controlSize(.small)
             }
         }
-        .task(id: urlString) {
+        // Re-run when connectivity flips back (the mp4 fetch may have died offline).
+        .task(id: "\(urlString)#\(NetworkMonitor.shared.generation)") {
             teardown()
             guard let file = await MotionArtwork.localFile(urlString: urlString, id: artworkID) else {
-                failed = true
-                return
+                return  // static cover stays visible — same as the lock screen
             }
             let player = AVPlayer(url: file)
             player.isMuted = true
@@ -71,7 +75,9 @@ struct MotionArtworkView: View {
     }
 }
 
-/// AVPlayerLayer host — SwiftUI has no native looping-video layer.
+/// AVPlayerLayer host — SwiftUI has no native looping-video layer. The layer
+/// stays invisible until `isReadyForDisplay` (first frame decoded), then
+/// fades in over the static base.
 private struct MotionPlayerLayer: UIViewRepresentable {
     let player: AVPlayer
 
@@ -89,10 +95,22 @@ private struct MotionPlayerLayer: UIViewRepresentable {
 
 final class MotionLayerView: UIView {
     let playerLayer = AVPlayerLayer()
+    private var readyObservation: NSKeyValueObservation?
 
     override init(frame: CGRect) {
         super.init(frame: frame)
         layer.addSublayer(playerLayer)
+        // No frame decoded yet → invisible; first frame → fade in. Without
+        // this the layer paints black over the cover while it buffers.
+        playerLayer.opacity = 0
+        readyObservation = playerLayer.observe(\.isReadyForDisplay) { [weak self] layer, _ in
+            guard let self else { return }
+            let target: Float = layer.isReadyForDisplay ? 1 : 0
+            guard self.playerLayer.opacity != target else { return }
+            UIView.animate(withDuration: 0.45) {
+                self.playerLayer.opacity = target
+            }
+        }
     }
 
     required init?(coder: NSCoder) {

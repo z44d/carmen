@@ -2,10 +2,12 @@
 //  LyricsView.swift
 //  Carmen — the lyrics panel shown inside the Now Playing screen.
 //
-//  Timed lines highlight in the accent color, auto-scroll with the playhead
-//  and seek on tap (same as the web client); `♪` instrumental rows stay
-//  quiet. Providers that only gave plain text render as a scrollable
-//  paragraph with the source credited underneath.
+//  Apple-Music-style karaoke: the current line is bold rounded white and
+//  sharp, every other line sits blurred and dimmed around it, and the swap
+//  rides a spring. Lines auto-scroll with the playhead and seek on tap
+//  (same as the web client); `♪` instrumental rows stay quiet. Providers
+//  that only gave plain text render as a scrollable paragraph with the
+//  source credited underneath.
 //
 
 import SwiftUI
@@ -48,6 +50,9 @@ struct LyricsView: View {
 
     // MARK: Synced
 
+    /// Apple-Music-style karaoke: the current line is bold, rounded, pure
+    /// white and sharp; every other line sits blurred and dimmed around it,
+    /// and the swap between them rides a spring. Tap any line to seek there.
     private func syncedBody(_ lines: [Lyrics.Line]) -> some View {
         // The active *vocal* line — filler (`♪`) rows never get highlighted.
         let elapsedMs = Int(player.currentTime * 1000)
@@ -55,23 +60,37 @@ struct LyricsView: View {
 
         return ScrollViewReader { proxy in
             ScrollView {
-                LazyVStack(alignment: .leading, spacing: 14) {
+                LazyVStack(alignment: .leading, spacing: 18) {
                     ForEach(Array(lines.enumerated()), id: \.offset) { index, line in
                         let isActive = index == activeIndex
-                        // Dim upcoming lines hard, fade the passed ones gently.
-                        let opacity = lineOpacity(index: index, activeIndex: activeIndex)
 
                         Button {
                             player.seek(to: Double(line.timeMs) / 1000)
                         } label: {
                             Text(line.text.isEmpty ? "♪" : line.text)
-                                .font(isActive ? .title2.weight(.bold) : .title3)
-                                .foregroundStyle(isActive ? Color.carmen : Color.primary.opacity(opacity))
+                                .font(
+                                    .system(
+                                        size: isActive ? 28 : 20,
+                                        weight: isActive ? .bold : .semibold,
+                                        design: .rounded
+                                    )
+                                )
+                                .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.4))
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                                 .id(index)
-                                .opacity(line.isFiller ? 0.35 : 1)
+                                // The line in the spotlight is crisp; the rest
+                                // fall out of focus, softly.
+                                .blur(radius: isActive ? 0 : 1.6)
+                                .scaleEffect(isActive ? 1 : 0.97, anchor: .leading)
+                                .shadow(
+                                    color: .black.opacity(isActive ? 0.35 : 0),
+                                    radius: 8,
+                                    y: 2
+                                )
+                                .opacity(line.isFiller && !isActive ? 0.35 : 1)
+                                .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isActive)
                                 .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
@@ -83,7 +102,7 @@ struct LyricsView: View {
             .scrollDismissesKeyboard(.immediately)
             .onChange(of: activeIndex) { _, newIndex in
                 guard let newIndex else { return }
-                withAnimation(.easeInOut(duration: 0.35)) {
+                withAnimation(.spring(response: 0.4, dampingFraction: 0.85)) {
                     proxy.scrollTo(newIndex, anchor: .center)
                 }
             }
@@ -92,18 +111,6 @@ struct LyricsView: View {
                     proxy.scrollTo(activeIndex, anchor: .center)
                 }
             }
-        }
-    }
-
-    /// 1 for active and past lines, quick fade for the next few, faint after.
-    private func lineOpacity(index: Int, activeIndex: Int?) -> Double {
-        guard let activeIndex else { return 0.4 }  // before the first line
-        if index <= activeIndex { return 0.9 }
-        switch index - activeIndex {
-        case 1: return 0.65
-        case 2: return 0.5
-        case 3: return 0.4
-        default: return 0.3
         }
     }
 

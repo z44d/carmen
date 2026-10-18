@@ -36,10 +36,12 @@ private struct APIDetail: Decodable { let detail: String? }
 struct API: Sendable {
     var baseURL: URL
 
-    /// Shared session — 30s request timeout, default caching policy.
+    /// Shared session — 45s idle-request timeout (the server does real work
+    /// per request: yt-dlp URL resolution and lyric-provider lookups can
+    /// take tens of seconds on a cold cache), 600s resource timeout.
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = 45
         configuration.timeoutIntervalForResource = 600
         return URLSession(configuration: configuration)
     }()
@@ -68,9 +70,25 @@ struct API: Sendable {
     }
 
     /// GET + JSON decode with HTML-catch-all and `{detail}` error handling.
+    /// Transient timeouts get exactly one retry — cold servers resolve
+    /// streams / lyrics slowly, and one stuck request should not read as
+    /// "Carmen is broken".
     func get<T: Decodable>(
         _ path: String, _ query: [String: String] = [:], as type: T.Type = T.self
     ) async throws -> T {
+        do {
+            return try await attempt(path, query)
+        } catch let error as URLError where error.code == .timedOut {
+            DebugLog.log("api", "\(path) timed out — retrying once")
+            try? await Task.sleep(for: .milliseconds(750))
+            return try await attempt(path, query)
+        }
+    }
+
+    private func attempt<T: Decodable>(
+        _ path: String, _ query: [String: String]
+    ) async throws -> T {
+        let started = Date()
         let requestURL = try url(path, query)
         let data: Data
         let response: URLResponse
@@ -78,10 +96,15 @@ struct API: Sendable {
             (data, response) = try await Self.session.data(from: requestURL)
         } catch let error as URLError where error.code == .cancelled {
             throw error
+        } catch let error as URLError where error.code == .timedOut {
+            DebugLog.log("api", "GET \(path) → timeout after \(Self.elapsed(started))s")
+            throw error
         } catch {
+            DebugLog.log("api", "GET \(path) → unreachable: \(error.localizedDescription)")
             throw APIError.unreachable
         }
         guard let http = response as? HTTPURLResponse else { throw APIError.unreachable }
+        DebugLog.log("api", "GET \(path) → \(http.statusCode) in \(Self.elapsed(started))s")
 
         // The server serves the SPA for unknown paths — catch that before decoding.
         if let mime = http.mimeType, !mime.contains("json"), http.statusCode < 400 {
@@ -94,8 +117,13 @@ struct API: Sendable {
         do {
             return try JSONDecoder().decode(T.self, from: data)
         } catch {
+            DebugLog.log("api", "GET \(path) → undecodable payload")
             throw APIError.decoding
         }
+    }
+
+    private static func elapsed(_ started: Date) -> String {
+        String(format: "%.2f", Date().timeIntervalSince(started))
     }
 
     // MARK: Endpoints

@@ -22,7 +22,7 @@ options:
 
 settings:
   base:
-    MARKETING_VERSION: "1.0.1"     # CFBundleShortVersionString — bump here for releases
+    MARKETING_VERSION: "1.1.0"     # CFBundleShortVersionString — bump here for releases
     CURRENT_PROJECT_VERSION: "1"   # CFBundleVersion
     SWIFT_VERSION: "5.0"           # Swift 5 language mode (works with the Swift 6 toolchain)
     TARGETED_DEVICE_FAMILY: "1"    # iPhone only, portrait only — matches the Android build

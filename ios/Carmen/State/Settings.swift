@@ -88,6 +88,8 @@ final class SettingsStore {
         static let lyricsProvider = "settings.lyricsProvider"
         static let liveActivities = "settings.liveActivities"
         static let accent = "settings.accent"
+        static let adaptiveAccent = "settings.adaptiveAccent"
+        static let downloadLiveActivities = "settings.downloadLiveActivities"
     }
 
     @ObservationIgnored private let defaults: UserDefaults = .standard
@@ -96,6 +98,8 @@ final class SettingsStore {
     private var _lyricsProviderRaw: String
     private var _liveActivitiesEnabled: Bool
     private var _accentRaw: String
+    private var _adaptiveAccentEnabled: Bool
+    private var _downloadLiveActivitiesEnabled: Bool
 
     /// Server URL without a trailing slash; empty string means "use the default".
     var apiBase: String {
@@ -132,11 +136,33 @@ final class SettingsStore {
         }
     }
 
+    /// Let the album cover pick the accent (Apple-Music-style ambient theming).
+    /// When on, `Color.carmen` follows the playing track's palette.
+    var adaptiveAccentEnabled: Bool {
+        get { _adaptiveAccentEnabled }
+        set {
+            _adaptiveAccentEnabled = newValue
+            defaults.set(newValue, forKey: Key.adaptiveAccent)
+        }
+    }
+
+    /// Whether downloads show a Live Activity with byte progress.
+    var downloadLiveActivitiesEnabled: Bool {
+        get { _downloadLiveActivitiesEnabled }
+        set {
+            _downloadLiveActivitiesEnabled = newValue
+            defaults.set(newValue, forKey: Key.downloadLiveActivities)
+        }
+    }
+
     init() {
         _apiBase = defaults.string(forKey: Key.apiBase) ?? ""
         _lyricsProviderRaw = defaults.string(forKey: Key.lyricsProvider) ?? LyricsProvider.auto.rawValue
         _liveActivitiesEnabled = defaults.object(forKey: Key.liveActivities) as? Bool ?? true
         _accentRaw = defaults.string(forKey: Key.accent) ?? AccentOption.green.rawValue
+        _adaptiveAccentEnabled = defaults.object(forKey: Key.adaptiveAccent) as? Bool ?? true
+        _downloadLiveActivitiesEnabled =
+            defaults.object(forKey: Key.downloadLiveActivities) as? Bool ?? true
     }
 
     /// Effective base URL (trimmed, default fallback) — build a client with it.

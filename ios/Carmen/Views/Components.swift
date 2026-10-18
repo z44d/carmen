@@ -22,14 +22,26 @@ extension Color {
         )
     }
 
-    /// The app-wide accent (Settings → Appearance, default Material Green).
-    /// Read through the observable store so every surface re-renders live.
-    @MainActor static var carmen: Color { Color(hex: SettingsStore.shared.accent.hex) }
+    /// The hex the whole app currently themes by: the playing cover's own
+    /// colour when Settings → Appearance → Adaptive Accent is on (frontend
+    /// parity), else the chosen palette accent.
+    @MainActor private static var effectiveHex: String {
+        let settings = SettingsStore.shared
+        if settings.adaptiveAccentEnabled, let hex = Player.shared.adaptiveColorHex, !hex.isEmpty {
+            return hex
+        }
+        return settings.accent.hex
+    }
+
+    /// The app-wide accent. Read through the observable stores so every
+    /// surface re-renders live — including when the cover's colour lands
+    /// mid-song.
+    @MainActor static var carmen: Color { Color(hex: effectiveHex) }
 
     /// Ink for filled-accent surfaces (play button, FABs): stays readable on
-    /// the near-white accent too.
+    /// the near-white accents — the palette's "no colour here" answer too.
     @MainActor static var carmenOnAccent: Color {
-        SettingsStore.shared.accent == .white ? .black.opacity(0.85) : .white
+        effectiveHex.uppercased() == "FFFFFF" ? .black.opacity(0.85) : .white
     }
 }
 
@@ -108,6 +120,9 @@ struct ArtworkView: View {
                 fallbackOrPlaceholder
             }
         }
+        // A failed (offline) load is remembered by the AsyncImage forever —
+        // re-key it whenever connectivity flips so covers reload themselves.
+        .id(NetworkMonitor.shared.generation)
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity)
         .clipped()
         .clipShape(RoundedRectangle(cornerRadius: cornerRadius, style: .continuous))

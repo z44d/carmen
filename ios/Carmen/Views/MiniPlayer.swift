@@ -2,10 +2,11 @@
 //  MiniPlayer.swift
 //  Carmen — the floating now-playing bar above the tab bar.
 //
-//  Tapping (or dragging up) expands the full player; the trailing buttons
-//  play/pause and skip. A hairline progress rail rides the top edge and the
-//  play button carries the chosen accent — same chrome the frontend's
-//  PlayerBar shows.
+//  Tapping (or dragging up) expands the full player; the trailing controls
+//  are the full transport — previous, play/pause, next and a queue button
+//  that opens the player straight into the Queue panel. A hairline progress
+//  rail rides the top edge and the play button carries the chosen accent —
+//  same chrome the frontend's PlayerBar shows.
 //
 
 import SwiftUI
@@ -15,7 +16,7 @@ struct MiniPlayer: View {
 
     var body: some View {
         if let track = player.current {
-            HStack(spacing: 12) {
+            HStack(spacing: 10) {
                 ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 6)
                     .frame(width: 40, height: 40)
                     .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
@@ -36,8 +37,21 @@ struct MiniPlayer: View {
                 if player.isBuffering {
                     ProgressView()
                         .controlSize(.small)
-                        .padding(.trailing, 4)
+                        .padding(.trailing, 2)
                 }
+
+                Button {
+                    player.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                        .frame(width: 28, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .opacity(player.hasPrevious ? 1 : 0.35)
+                .accessibilityLabel("Previous")
 
                 Button {
                     player.togglePlayPause()
@@ -50,17 +64,32 @@ struct MiniPlayer: View {
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
                 Button {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.title3)
+                        .font(.footnote)
                         .foregroundStyle(.primary)
-                        .frame(width: 32, height: 32)
+                        .frame(width: 28, height: 32)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .opacity(player.hasNext ? 1 : 0.35)
+                .accessibilityLabel("Next")
+
+                Button {
+                    player.openPlayer(panel: .queue)
+                } label: {
+                    Image(systemName: "list.bullet")
+                        .font(.footnote)
+                        .foregroundStyle(.primary)
+                        .frame(width: 28, height: 32)
+                        .contentShape(Rectangle())
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel("Queue")
             }
             .padding(.horizontal, 12)
             .frame(height: 56)

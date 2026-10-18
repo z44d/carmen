@@ -257,9 +257,12 @@ final class StreamResourceLoader: NSObject, AVAssetResourceLoaderDelegate {
 
 /// Fulfils one `AVAssetResourceLoadingRequest` from cache + ranged fetches.
 private struct StreamLoad {
+    /// 60s between chunks: the first byte goes through the server's cold
+    /// yt-dlp resolution, which can sit for half a minute before answering;
+    /// after that the stream is a fast transfer that never idles this long.
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.default
-        configuration.timeoutIntervalForRequest = 30
+        configuration.timeoutIntervalForRequest = 60
         configuration.timeoutIntervalForResource = 900
         return URLSession(configuration: configuration)
     }()
@@ -281,6 +284,7 @@ private struct StreamLoad {
         } catch let error as URLError where error.code == .cancelled {
             // Same: cancelled underneath us.
         } catch {
+            DebugLog.log("stream", "\(remote.lastPathComponent) load failed: \(error.localizedDescription)")
             if !request.isCancelled { request.finishLoading(with: error) }
         }
     }
@@ -353,6 +357,10 @@ private struct StreamLoad {
         guard let http = response as? HTTPURLResponse else {
             throw streamError("The stream returned no response.")
         }
+        DebugLog.log(
+            "stream",
+            "probe \(remote.lastPathComponent) → \(http.statusCode), \(http.mimeType ?? "?")"
+        )
         if http.statusCode == 206 {
             let total = (http.value(forHTTPHeaderField: "Content-Range") ?? "")
                 .split(separator: "/")
@@ -387,6 +395,7 @@ private struct StreamLoad {
         guard let http = response as? HTTPURLResponse else {
             throw streamError("The stream returned no response.")
         }
+        DebugLog.log("stream", "fetch \(urlRequest.value(forHTTPHeaderField: "Range") ?? "") → \(http.statusCode)")
         if http.statusCode == 416 { return 0 }  // asked past the end — caller wraps up
         guard (200...299).contains(http.statusCode) else {
             let body = await Self.collectBody(bytes)

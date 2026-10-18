@@ -2,9 +2,10 @@
 //  CarmenLiveActivityBundle.swift
 //  Carmen — widget extension entry point.
 //
-//  Declares the single Live Activity the Carmen app keeps alive while music
-//  plays: lock-screen lyrics card + Dynamic Island. The app pushes every
-//  ContentState locally (no APNs) — see State/LiveActivity.swift.
+//  Declares the two Live Activities the Carmen app keeps alive: the lock-
+//  screen lyrics card while music plays, and the download progress card
+//  while a song is being saved. Both push every ContentState locally (no
+//  APNs) — see State/LiveActivity.swift and State/DownloadActivity.swift.
 //
 
 import ActivityKit
@@ -16,6 +17,7 @@ import WidgetKit
 struct CarmenLiveActivityBundle: WidgetBundle {
     var body: some Widget {
         LyricLiveActivity()
+        DownloadLiveActivity()
     }
 }
 
@@ -189,4 +191,143 @@ private func clock(_ time: TimeInterval) -> String {
     let m = (total % 3600) / 60
     let s = total % 60
     return h > 0 ? String(format: "%d:%02d:%02d", h, m, s) : String(format: "%d:%02d", m, s)
+}
+
+// MARK: - Download progress
+
+struct DownloadLiveActivity: Widget {
+    var body: some WidgetConfiguration {
+        ActivityConfiguration(for: DownloadActivityAttributes.self) { context in
+            // Lock screen / banner: which song is landing + how many bytes.
+            LockScreenDownloadView(state: context.state)
+                .activityBackgroundTint(Color.black.opacity(0.55))
+                .activitySystemActionForegroundColor(.white)
+        } dynamicIsland: { context in
+            DynamicIsland {
+                DynamicIslandExpandedRegion(.leading) {
+                    ArtworkThumb(urlString: context.state.artworkURL)
+                        .padding(.leading, 4)
+                }
+                DynamicIslandExpandedRegion(.trailing) {
+                    Image(systemName: downloadSymbol(context.state))
+                        .font(.footnote)
+                        .foregroundStyle(.white.opacity(0.85))
+                        .padding(.trailing, 4)
+                }
+                DynamicIslandExpandedRegion(.center) {
+                    VStack(alignment: .leading, spacing: 2) {
+                        Text(context.state.title)
+                            .font(.footnote.weight(.semibold))
+                            .lineLimit(1)
+                            .foregroundStyle(.white)
+                        Text(context.state.artist)
+                            .font(.caption2)
+                            .lineLimit(1)
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.horizontal, 4)
+                }
+                DynamicIslandExpandedRegion(.bottom) {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text(downloadCaption(context.state))
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.7))
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        ProgressBar(value: context.state.progress)
+                            .frame(height: 3)
+                    }
+                    .padding(.horizontal, 4)
+                }
+            } compactLeading: {
+                ArtworkThumb(urlString: context.state.artworkURL, size: 24)
+            } compactTrailing: {
+                if context.state.isDone {
+                    Image(systemName: "checkmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.green)
+                } else if context.state.isFailed {
+                    Image(systemName: "exclamationmark.circle.fill")
+                        .font(.caption2)
+                        .foregroundStyle(.yellow)
+                } else {
+                    HStack(spacing: 3) {
+                        Image(systemName: "arrow.down.circle")
+                            .font(.caption2)
+                            .foregroundStyle(.white.opacity(0.85))
+                        Text(byteLabel(context.state.progress))
+                            .font(.caption2.monospacedDigit())
+                            .foregroundStyle(.white.opacity(0.65))
+                    }
+                }
+            } minimal: {
+                Image(systemName: downloadSymbol(context.state))
+                    .foregroundStyle(.white)
+            }
+            .keylineTint(.green)
+        }
+    }
+}
+
+/// "arrow.down" while fetching, "checkmark" when saved, "!" when failed.
+private func downloadSymbol(_ state: DownloadActivityAttributes.ContentState) -> String {
+    if state.isDone { return "checkmark.circle.fill" }
+    if state.isFailed { return "exclamationmark.circle.fill" }
+    return "arrow.down.circle.fill"
+}
+
+/// One-line status under the title: bytes landed / total, or the end state.
+private func downloadCaption(_ state: DownloadActivityAttributes.ContentState) -> String {
+    if state.isDone { return "Downloaded — ready to play offline" }
+    if state.isFailed { return "Download failed" }
+    let formatter = ByteCountFormatter()
+    let received = formatter.string(fromByteCount: state.receivedBytes)
+    if state.totalBytes > 0 {
+        return "\(received) of \(formatter.string(fromByteCount: state.totalBytes))"
+    }
+    return "\(received) downloaded"
+}
+
+/// "42%" for the compact trailing slot.
+private func byteLabel(_ progress: Double) -> String {
+    "\(Int((max(0, min(progress, 1)) * 100).rounded()))%"
+}
+
+// MARK: - Lock screen (download)
+
+private struct LockScreenDownloadView: View {
+    let state: DownloadActivityAttributes.ContentState
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            HStack(spacing: 10) {
+                ArtworkThumb(urlString: state.artworkURL, size: 38)
+                VStack(alignment: .leading, spacing: 1) {
+                    Text(state.title.isEmpty ? "Downloading" : state.title)
+                        .font(.subheadline.weight(.semibold))
+                        .lineLimit(1)
+                        .foregroundStyle(.white)
+                    Text(state.artist.isEmpty ? "Carmen" : state.artist)
+                        .font(.caption)
+                        .lineLimit(1)
+                        .foregroundStyle(.white.opacity(0.65))
+                }
+                Spacer(minLength: 8)
+                Image(systemName: downloadSymbol(state))
+                    .font(.subheadline)
+                    .foregroundStyle(
+                        state.isDone ? Color.green : (state.isFailed ? Color.yellow : Color.white.opacity(0.8))
+                    )
+            }
+
+            Text(downloadCaption(state))
+                .font(.footnote)
+                .foregroundStyle(.white.opacity(0.7))
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            ProgressBar(value: state.progress)
+                .frame(height: 3)
+        }
+        .padding(14)
+    }
 }

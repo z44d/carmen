@@ -1,6 +1,6 @@
 //
 //  Downloads.swift
-//  Carmen — offline downloads.
+//  Carmen — offline downloads over a background URLSession.
 //
 //  One folder per song under Documents/songs/<videoId>/ holding exactly what
 //  the web client saves: the raw `audio.*`, the best artwork it can get, the
@@ -8,6 +8,12 @@
 //  human-readable `lyrics.lrc` / `lyrics.txt`. Downloaded audio plays
 //  straight from disk (Player picks it before any stream), so a song on the
 //  device never touches the network again.
+//
+//  The audio itself transfers through a *background* URLSession, so it keeps
+//  going while the app is suspended or killed; iOS relaunches the process to
+//  deliver the finished file (handleEventsForBackgroundURLSession in
+//  CarmenApp). Byte progress drives both the button's ring and the download
+//  Live Activity (State/DownloadActivity.swift).
 //
 
 import Foundation
@@ -32,10 +38,23 @@ final class DownloadsStore {
     /// Video ids whose last attempt failed (until the alert is dismissed).
     private(set) var failedIds: Set<String> = []
 
-    @ObservationIgnored private let fileManager = FileManager.default
-    @ObservationIgnored private var tasks: [String: Task<Void, Never>] = [:]
-    @ObservationIgnored private var trackCache: [String: Track] = [:]
+    /// Handed over when iOS relaunches the app for the background session.
+    var backgroundCompletionHandler: (() -> Void)?
 
+    @ObservationIgnored private let fileManager = FileManager.default
+    @ObservationIgnored private let delegate = DownloadSessionDelegate()
+    @ObservationIgnored private let backgroundSession: URLSession
+    @ObservationIgnored private var downloadTasks: [String: URLSessionDownloadTask] = [:]
+    @ObservationIgnored private var trackCache: [String: Track] = [:]
+    @ObservationIgnored private var lastProgressReport: [String: (progress: Double, date: Date)] = [:]
+    /// Tracks of in-flight downloads — persisted so a relaunch mid-download
+    /// can still name the song on its Live Activity.
+    @ObservationIgnored private var activeTracks: [String: Track] = [:]
+
+    private static let activeTracksKey = "downloads.activeTracks"
+
+    /// Companion fetches (artwork, track.json) — the audio goes through the
+    /// background session instead.
     private static let session: URLSession = {
         let configuration = URLSessionConfiguration.default
         configuration.timeoutIntervalForRequest = 30
@@ -44,15 +63,30 @@ final class DownloadsStore {
     }()
 
     private init() {
+        // Created first: if iOS relaunched us for the session's events the
+        // delegate must already be attached when they arrive.
+        let configuration = URLSessionConfiguration.background(
+            withIdentifier: "com.z44d.carmen.downloads"
+        )
+        configuration.isDiscretionary = false
+        configuration.sessionSendsLaunchEvents = true
+        backgroundSession = URLSession(
+            configuration: configuration,
+            delegate: delegate,
+            delegateQueue: nil
+        )
         scan()
+        restoreActiveTracks()
     }
 
     // MARK: - Locations
 
-    private var root: URL {
-        fileManager.urls(for: .documentDirectory, in: .userDomainMask)[0]
+    nonisolated static var songsRoot: URL {
+        FileManager.default.urls(for: .documentDirectory, in: .userDomainMask)[0]
             .appendingPathComponent("songs", isDirectory: true)
     }
+
+    private var root: URL { Self.songsRoot }
 
     func directory(for videoId: String) -> URL {
         root.appendingPathComponent(videoId, isDirectory: true)
@@ -128,17 +162,27 @@ final class DownloadsStore {
 
     // MARK: - Downloading
 
-    /// Download audio + artwork + `track.json`/lyrics for one song.
+    /// Start saving one song: the audio through the background session (it
+    /// outlives the app), artwork + `track.json` once the bytes landed.
     func download(_ track: Track) {
         let id = track.videoId
-        guard !downloadedIds.contains(id), tasks[id] == nil else { return }
+        guard !downloadedIds.contains(id), downloadTasks[id] == nil else { return }
         failedIds.remove(id)
-        states[id] = .running(progress: 0)
-        tasks[id] = Task { [weak self] in
-            guard let self else { return }
-            await self.perform(track)
-            self.tasks[id] = nil
+        guard let url = API(baseURL: SettingsStore.shared.apiBaseURL).streamURL(videoId: id) else {
+            DebugLog.log("downloads", "failed \(id): no stream url")
+            failedIds.insert(id)
+            return
         }
+        states[id] = .running(progress: 0)
+        activeTracks[id] = track
+        persistActiveTracks()
+
+        let task = backgroundSession.downloadTask(with: URLRequest(url: url))
+        task.taskDescription = id
+        downloadTasks[id] = task
+        task.resume()
+        DebugLog.log("downloads", "started \(id)")
+        DownloadActivityController.shared.start(track: track, videoId: id)
     }
 
     /// Dismiss the failure flag behind a download alert.
@@ -148,77 +192,149 @@ final class DownloadsStore {
 
     /// Toggle helper for menus: forget a saved song.
     func remove(videoId: String) {
-        tasks[videoId]?.cancel()
-        tasks[videoId] = nil
+        downloadTasks[videoId]?.cancel()
+        downloadTasks[videoId] = nil
         try? fileManager.removeItem(at: directory(for: videoId))
         downloadedIds.remove(videoId)
         trackCache[videoId] = nil
         states[videoId] = nil
         failedIds.remove(videoId)
+        activeTracks[videoId] = nil
+        persistActiveTracks()
+        lastProgressReport[videoId] = nil
+        DownloadActivityController.shared.dismiss(videoId: videoId)
     }
 
     func removeAll() {
         for id in downloadedIds { remove(videoId: id) }
     }
 
-    private func perform(_ track: Track) async {
+    // MARK: - Background-session callbacks (hop from the delegate)
+
+    /// Byte progress — throttled to ~2% steps so the ring and the Live
+    /// Activity update without churning observation.
+    nonisolated func reportProgress(videoId: String, written: Int64, expected: Int64) {
+        Task { @MainActor in
+            guard self.states[videoId] != nil || self.activeTracks[videoId] != nil else { return }
+            let progress = expected > 0 ? min(Double(written) / Double(expected), 1) : 0
+            let now = Date()
+            if let last = self.lastProgressReport[videoId] {
+                guard progress - last.progress >= 0.02 || now.timeIntervalSince(last.date) > 2 else {
+                    return
+                }
+            }
+            self.lastProgressReport[videoId] = (progress, now)
+            self.states[videoId] = .running(progress: progress)
+            DebugLog.log(
+                "downloads",
+                "progress \(videoId): \(written)/\(expected) (\(Int(progress * 100))%)"
+            )
+            DownloadActivityController.shared.update(
+                videoId: videoId,
+                progress: progress,
+                received: written,
+                total: expected
+            )
+        }
+    }
+
+    /// The audio finished transferring — stage the file, then fetch the
+    /// companions (artwork, track.json) and mark the song saved.
+    nonisolated func downloadAudioReady(videoId: String, staged: URL) {
+        Task { @MainActor in
+            self.downloadTasks[videoId] = nil
+            guard let track = self.activeTracks[videoId] ?? self.trackCache[videoId] else {
+                self.downloadFailed(videoId: videoId, reason: "lost track metadata")
+                return
+            }
+            self.finalize(track, staged: staged)
+        }
+    }
+
+    nonisolated func downloadFailed(videoId: String, reason: String) {
+        Task { @MainActor in
+            self.downloadTasks[videoId] = nil
+            guard self.states[videoId] != nil || self.activeTracks[videoId] != nil else { return }
+            DebugLog.log("downloads", "failed \(videoId): \(reason)")
+            try? self.fileManager.removeItem(at: self.directory(for: videoId))
+            self.states[videoId] = nil
+            self.activeTracks[videoId] = nil
+            self.persistActiveTracks()
+            self.lastProgressReport[videoId] = nil
+            self.failedIds.insert(videoId)
+            DownloadActivityController.shared.end(videoId: videoId, failed: true)
+        }
+    }
+
+    /// Cancelled through `remove` — the cleanup already happened there.
+    nonisolated func downloadCancelled(videoId: String) {
+        Task { @MainActor in
+            self.downloadTasks[videoId] = nil
+            self.states[videoId] = nil
+            self.activeTracks[videoId] = nil
+            self.persistActiveTracks()
+        }
+    }
+
+    /// Called by the AppDelegate once the relaunched session drained its
+    /// pending events — lets iOS know the relaunch is done.
+    func runBackgroundCompletionHandler() {
+        backgroundCompletionHandler?()
+        backgroundCompletionHandler = nil
+    }
+
+    // MARK: - Post-transfer work
+
+    private func finalize(_ track: Track, staged: URL) {
         let id = track.videoId
         let api = API(baseURL: SettingsStore.shared.apiBaseURL)
-        do {
-            // 1. Audio — the only required piece; written atomically once the
-            //    whole body arrived so a failure never leaves a fake download.
-            guard let stream = api.streamURL(videoId: id) else { throw APIError.unreachable }
-            let (audio, mime) = try await fetchAudio(stream, videoId: id)
-            let dir = directory(for: id)
-            try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
-            try audio.write(to: dir.appendingPathComponent("audio.\(Self.audioExtension(mime))"), options: .atomic)
-
-            // 2. Artwork — best effort (ytimg chain first, payload fallbacks).
+        Task {
+            // 1. Artwork — best effort (ytimg chain first, payload fallbacks).
             if let (image, ext) = await Self.fetchArtwork(track) {
-                try? image.write(to: dir.appendingPathComponent("artwork.\(ext)"), options: .atomic)
+                try? image.write(
+                    to: directory(for: id).appendingPathComponent("artwork.\(ext)"),
+                    options: .atomic
+                )
             }
 
-            // 3. Enriched payload + lyrics — the offline source of truth.
+            // 2. Enriched payload + lyrics — the offline source of truth.
             if let detail = try? await api.trackDetail(id, provider: nil),
                 let payload = try? JSONEncoder().encode(detail)
             {
-                try? payload.write(to: dir.appendingPathComponent("track.json"), options: .atomic)
-                Self.writeLyrics(detail.lyrics, into: dir)
+                try? payload.write(
+                    to: directory(for: id).appendingPathComponent("track.json"),
+                    options: .atomic
+                )
+                Self.writeLyrics(detail.lyrics, into: directory(for: id))
             }
 
             trackCache[id] = track
             downloadedIds.insert(id)
             states[id] = .done
-        } catch is CancellationError {
-            try? fileManager.removeItem(at: directory(for: id))
-            states[id] = nil
-        } catch {
-            try? fileManager.removeItem(at: directory(for: id))
-            states[id] = nil
-            failedIds.insert(id)
+            activeTracks[id] = nil
+            persistActiveTracks()
+            lastProgressReport[id] = nil
+            DebugLog.log("downloads", "finished \(id)")
+            DownloadActivityController.shared.end(videoId: id, failed: false)
         }
     }
 
-    private func fetchAudio(_ url: URL, videoId: String) async throws -> (Data, String?) {
-        let (bytes, response) = try await Self.session.bytes(for: URLRequest(url: url))
-        guard let http = response as? HTTPURLResponse, (200...299).contains(http.statusCode) else {
-            let status = (response as? HTTPURLResponse)?.statusCode ?? 0
-            throw APIError.server(status: status, message: "")
+    /// Move the temp file the system hands to the delegate into its final
+    /// home — must run synchronously, before the delegate method returns
+    /// (the system deletes the temp file right after).
+    nonisolated static func stageAudioFile(at location: URL, videoId: String, mime: String?) -> URL? {
+        let dir = songsRoot.appendingPathComponent(videoId, isDirectory: true)
+        let fileManager = FileManager.default
+        try? fileManager.createDirectory(at: dir, withIntermediateDirectories: true)
+        let destination = dir.appendingPathComponent("audio.\(audioExtension(mime))")
+        try? fileManager.removeItem(at: destination)
+        do {
+            try fileManager.moveItem(at: location, to: destination)
+            return destination
+        } catch {
+            DebugLog.log("downloads", "stage failed \(videoId): \(error.localizedDescription)")
+            return nil
         }
-        let expected = http.expectedContentLength > 0 ? http.expectedContentLength : 0
-        var data = Data()
-        var lastReported = 0.0
-        for try await chunk in bytes {
-            data.append(chunk)
-            if expected > 0 {
-                let progress = min(Double(data.count) / Double(expected), 1)
-                if progress - lastReported >= 0.02 {  // throttle observation churn
-                    lastReported = progress
-                    states[videoId] = .running(progress: progress)
-                }
-            }
-        }
-        return (data, http.mimeType)
     }
 
     // MARK: Artwork / lyrics helpers
@@ -253,7 +369,7 @@ final class DownloadsStore {
         }
     }
 
-    private static func audioExtension(_ mime: String?) -> String {
+    nonisolated static func audioExtension(_ mime: String?) -> String {
         switch mime?.split(separator: ";").first.map(String.init) {
         case "audio/mp4", "audio/aac", "video/mp4": return "m4a"
         case "audio/webm", "audio/opus": return "webm"
@@ -294,6 +410,20 @@ final class DownloadsStore {
         }
     }
 
+    // MARK: Persistence
+
+    private func persistActiveTracks() {
+        guard let data = try? JSONEncoder().encode(activeTracks) else { return }
+        UserDefaults.standard.set(data, forKey: Self.activeTracksKey)
+    }
+
+    private func restoreActiveTracks() {
+        guard let data = UserDefaults.standard.data(forKey: Self.activeTracksKey),
+            let saved = try? JSONDecoder().decode([String: Track].self, from: data)
+        else { return }
+        activeTracks = saved
+    }
+
     // MARK: Scan
 
     /// Rebuild `downloadedIds` from disk (launch).
@@ -306,5 +436,72 @@ final class DownloadsStore {
             if audio != nil { found.insert(name) }
         }
         downloadedIds = found
+    }
+}
+
+/// Delegate for the background download session. Nonisolated (URLSession
+/// calls in on its own queue) — every store interaction hops to the main
+/// actor. The file move in `didFinishDownloadingTo` is the one synchronous
+/// piece: the system deletes the temp file the moment this returns.
+final class DownloadSessionDelegate: NSObject, URLSessionDownloadDelegate {
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didFinishDownloadingTo location: URL
+    ) {
+        guard let id = downloadTask.taskDescription else { return }
+        let http = downloadTask.response as? HTTPURLResponse
+        let status = http?.statusCode ?? 200
+        guard (200...299).contains(status) else {
+            DownloadsStore.shared.downloadFailed(
+                videoId: id,
+                reason: "server responded \(status)"
+            )
+            return
+        }
+        guard
+            let staged = DownloadsStore.stageAudioFile(
+                at: location,
+                videoId: id,
+                mime: http?.mimeType
+            )
+        else {
+            DownloadsStore.shared.downloadFailed(
+                videoId: id,
+                reason: "could not move the file into place"
+            )
+            return
+        }
+        DownloadsStore.shared.downloadAudioReady(videoId: id, staged: staged)
+    }
+
+    func urlSession(
+        _ session: URLSession,
+        downloadTask: URLSessionDownloadTask,
+        didWriteData bytesWritten: Int64,
+        totalBytesWritten: Int64,
+        totalBytesExpectedToWrite: Int64
+    ) {
+        guard let id = downloadTask.taskDescription else { return }
+        DownloadsStore.shared.reportProgress(
+            videoId: id,
+            written: totalBytesWritten,
+            expected: totalBytesExpectedToWrite
+        )
+    }
+
+    func urlSession(_ session: URLSession, task: URLSessionTask, didCompleteWithError error: (any Error)?) {
+        guard let error, let id = task.taskDescription else { return }
+        if (error as? URLError)?.code == .cancelled {
+            DownloadsStore.shared.downloadCancelled(videoId: id)
+            return
+        }
+        DownloadsStore.shared.downloadFailed(videoId: id, reason: error.localizedDescription)
+    }
+
+    func urlSessionDidFinishEvents(forBackgroundURLSession session: URLSession) {
+        Task { @MainActor in
+            DownloadsStore.shared.runBackgroundCompletionHandler()
+        }
     }
 }

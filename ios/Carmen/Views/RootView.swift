@@ -1,7 +1,7 @@
 //
 //  RootView.swift
-//  Carmen — the three-tab shell (Home / Search / Library), the floating mini
-//  player and the full Now Playing overlay.
+//  Carmen — the four-tab shell (Home / Search / Library / Settings), the
+//  floating mini player and the full Now Playing overlay.
 //
 //  Each tab owns its own NavigationStack; the mini player floats above the
 //  tab bar. The full player is an overlay driven by the Player's
@@ -17,7 +17,7 @@ struct RootView: View {
     @State private var selectedTab: Tab = .home
 
     enum Tab: Hashable {
-        case home, search, library
+        case home, search, library, settings
     }
 
     var body: some View {
@@ -43,6 +43,12 @@ struct RootView: View {
                 }
                 .tabItem { Label("Library", systemImage: "square.stack") }
                 .tag(Tab.library)
+
+                NavigationStack {
+                    SettingsView(embeddedInTab: true)
+                }
+                .tabItem { Label("Settings", systemImage: "gearshape") }
+                .tag(Tab.settings)
             }
 
             // Mini player floats just above the tab bar when something is
@@ -72,10 +78,11 @@ struct RootView: View {
         // the App scene so the @Observable read re-renders every surface live.
         .tint(Color.carmen)
         .animation(.snappy(duration: 0.25), value: player.hasQueue)
-        // Stream failure banner — sits above everything while the player is stuck.
+        // Stream failure banner — sits above everything while the player is
+        // stuck; Retry re-attempts, ✕ just dismisses it.
         .overlay(alignment: .top) {
             if let message = player.errorMessage {
-                ErrorBanner(message: message) { player.retry() }
+                ErrorBanner(message: message, retry: { player.retry() }, dismiss: { player.dismissError() })
                     .padding(.horizontal, 12)
                     .padding(.top, 4)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -83,16 +90,24 @@ struct RootView: View {
         }
         .animation(.snappy(duration: 0.2), value: player.errorMessage)
         .task {
-            // Re-attach the lyric Live Activity if one outlived the app.
+            // Re-attach the Live Activities (lyrics + downloads) if any
+            // outlived the app.
             LyricActivityController.shared.adoptExisting()
+            DownloadActivityController.shared.adoptExisting()
+        }
+        .onChange(of: NetworkMonitor.shared.isOnline) { _, online in
+            // A stream that died offline quietly restarts on reconnect
+            // (covers the offline-play → reconnect repro).
+            if online { player.retryIfBroken() }
         }
     }
 }
 
-/// Transient banner explaining why playback stopped, with a retry.
+/// Transient banner explaining why playback stopped — retry or dismiss.
 private struct ErrorBanner: View {
     let message: String
     let retry: () -> Void
+    let dismiss: () -> Void
 
     var body: some View {
         HStack(spacing: 12) {
@@ -107,6 +122,15 @@ private struct ErrorBanner: View {
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
                 .controlSize(.small)
+            Button(action: dismiss) {
+                Image(systemName: "xmark")
+                    .font(.footnote.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .frame(width: 28, height: 28)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .accessibilityLabel("Dismiss")
         }
         .padding(12)
         .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))

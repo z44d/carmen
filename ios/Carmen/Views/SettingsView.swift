@@ -1,18 +1,24 @@
 //
 //  SettingsView.swift
-//  Carmen — server URL, lyrics, Live Activities and about. Presented as a
-//  sheet from the Library tab (with its own NavigationStack + Done button).
+//  Carmen — server URL, appearance, lyrics, Live Activities, storage,
+//  diagnostics and about. Presented either as a tab (4th tab, no Done) or
+//  as a sheet from the Library tab (with its own Done button).
 //
 
 import SwiftUI
 
 struct SettingsView: View {
+    /// `true` when hosted in the Settings tab — no Done button, the tab bar
+    /// already handles leaving.
+    var embeddedInTab = false
+
     @Environment(SettingsStore.self) private var settings
     @Environment(Player.self) private var player
     @Environment(DownloadsStore.self) private var downloads
     @Environment(\.dismiss) private var dismiss
 
     @State private var syncedLyrics = true
+    @State private var logSize = DebugLog.sizeLabel
 
     private let swatchColumns = [GridItem(.adaptive(minimum: 44), spacing: 12)]
 
@@ -40,6 +46,7 @@ struct SettingsView: View {
             }
 
             Section {
+                Toggle("Adaptive Accent", isOn: $settings.adaptiveAccentEnabled)
                 LazyVGrid(columns: swatchColumns, spacing: 12) {
                     ForEach(AccentOption.allCases) { option in
                         Button {
@@ -58,14 +65,18 @@ struct SettingsView: View {
                                 }
                         }
                         .buttonStyle(.plain)
+                        .opacity(settings.adaptiveAccentEnabled ? 0.45 : 1)
                         .accessibilityLabel(option.name)
                     }
                 }
                 .padding(.vertical, 4)
+                .disabled(settings.adaptiveAccentEnabled)
             } header: {
                 Text("Appearance")
             } footer: {
-                Text("Accent color — defaults to Material Green (#4CAF50), the same palette the web app ships.")
+                Text(
+                    "Adaptive Accent lets the album cover pick the color — the player, buttons and highlights follow the record, like Apple Music. When off, the chosen palette accent applies everywhere: defaults to Material Green (#4CAF50), the same palette the web app ships."
+                )
             }
 
             Section {
@@ -84,10 +95,13 @@ struct SettingsView: View {
 
             Section {
                 Toggle("Lyric Live Activities", isOn: $settings.liveActivitiesEnabled)
+                Toggle("Download Live Activities", isOn: $settings.downloadLiveActivitiesEnabled)
             } header: {
                 Text("Live Activities")
             } footer: {
-                Text("Show the current lyric on the Lock Screen and Dynamic Island while music plays.")
+                Text(
+                    "Lyrics show the current line on the Lock Screen and Dynamic Island while music plays; downloads show how many bytes have landed so far."
+                )
             }
 
             Section {
@@ -102,6 +116,23 @@ struct SettingsView: View {
                 Text("Storage")
             } footer: {
                 Text("A download keeps the audio, artwork and lyrics on the device — the song then plays and shows its lyrics fully offline.")
+            }
+
+            Section {
+                LabeledContent("Log Size", value: logSize)
+                ShareLink(item: DebugLog.fileURL) {
+                    Label("Share Debug Log", systemImage: "square.and.arrow.up")
+                }
+                Button("Clear Log") {
+                    DebugLog.clear()
+                    logSize = DebugLog.sizeLabel
+                }
+            } header: {
+                Text("Diagnostics")
+            } footer: {
+                Text(
+                    "Every API call, stream fetch, playback transition and download writes a line to this log. If a song refuses to play, share it and the real reason is in there."
+                )
             }
 
             Section {
@@ -121,12 +152,15 @@ struct SettingsView: View {
         .listStyle(.insetGrouped)
         .navigationTitle("Settings")
         .toolbar {
-            ToolbarItem(placement: .topBarTrailing) {
-                Button("Done") { dismiss() }
+            if !embeddedInTab {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Button("Done") { dismiss() }
+                }
             }
         }
         .onAppear {
             syncedLyrics = player.syncedLyricsEnabled
+            logSize = DebugLog.sizeLabel
         }
         .onChange(of: syncedLyrics) { _, newValue in
             player.syncedLyricsEnabled = newValue

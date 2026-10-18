@@ -95,6 +95,20 @@ final class Player {
     /// Resolved motion-artwork mp4 for the current track (nil = none yet).
     private(set) var motionArtworkURL: String?
 
+    // MARK: Adaptive accent (ambient theming)
+
+    /// Cover-derived accent hex for the current track ("#RRGGBB", from
+    /// ArtworkPalette — the frontend's pickAccentColor). `Color.carmen`
+    /// follows this when Settings → Appearance → Adaptive Accent is on.
+    private(set) var adaptiveColorHex: String?
+
+    /// The current cover's colour as a SwiftUI color (nil = no cover yet →
+    /// the chosen accent keeps standing in).
+    var adaptiveColor: Color? {
+        guard let hex = adaptiveColorHex, !hex.isEmpty else { return nil }
+        return Color(hex: hex)
+    }
+
     // MARK: Engine
 
     private let engine = AVPlayer()
@@ -116,6 +130,14 @@ final class Player {
     private var artworkPending: Set<String> = []
     /// album/term key → motion mp4 URL ("" = catalogue says none).
     private var motionURLCache: [String: String] = [:]
+    /// "artworkID|motionURL" → the animated artwork handed to the media
+    /// session (`MPMediaItemAnimatedArtwork`, iOS 26 — stored as Any because
+    /// a stored property can't be availability-restricted). Rebuilding it on
+    /// every throttled sync churns the lock screen and leaks handlers, so
+    /// it's built once per artwork.
+    private var animatedArtworkCache: [String: Any] = [:]
+    /// videoId → adaptive accent hex ("" = no readable colour).
+    private var adaptiveHexCache: [String: String] = [:]
 
     private var _shuffle = false
     private var _repeatModeRaw = RepeatMode.off.rawValue
@@ -159,10 +181,20 @@ final class Player {
 
     // MARK: - Presentation
 
+    /// Panel the player should open straight into (queue button in the mini
+    /// bar, related tap while playing, …). Consumed by NowPlayingView.onAppear.
+    var pendingPanel: PlayerPanel?
+
     /// Expand the player from the mini bar (tap / swipe up). Mounts the
     /// overlay at expansion 0 first, then animates up — the async hop is what
     /// makes the slide actually play.
     func openPlayer() {
+        openPlayer(panel: nil)
+    }
+
+    /// Same, optionally pre-selecting a panel (Queue / Related).
+    func openPlayer(panel: PlayerPanel?) {
+        if let panel { pendingPanel = panel }
         guard !showNowPlaying || expansion < 1 else { return }
         expansion = 0
         showNowPlaying = true
@@ -182,6 +214,11 @@ final class Player {
             guard let self, self.expansion == 0 else { return }
             self.showNowPlaying = false
         }
+    }
+
+    /// The error banner's ✕ — the user acknowledged it; stop showing it.
+    func dismissError() {
+        errorMessage = nil
     }
 
     // MARK: - Queue API
@@ -367,6 +404,7 @@ final class Player {
         relatedVideoId = nil
         relatedLoading = false
         motionArtworkURL = nil
+        adaptiveColorHex = nil
         errorMessage = nil
         UserDefaults.standard.removeObject(forKey: resumeKey)
         UserDefaults.standard.removeObject(forKey: queueKey)
@@ -444,6 +482,10 @@ final class Player {
         loadRelated(for: track)
         resolveMotionArtwork(for: track)
         updateRemoteCommands()
+        DebugLog.log(
+            "player",
+            "start \(track.videoId) “\(track.title)” (offline: \(DownloadsStore.shared.isDownloaded(track.videoId)))"
+        )
 
         // Source chain: downloaded file → `carmen-cache://` (disk cache) →
         // failure. A saved song never touches the network again.
@@ -502,14 +544,25 @@ final class Player {
         isPlaying = false
         isBuffering = false
         syncNowPlaying()
+        DebugLog.log("player", "stream broken \(track.videoId): \(detail)")
         // Probe the endpoint so the user sees the server's actual reason.
         Task { [weak self] in
             guard let self else { return }
             let probed = await self.api.streamError(videoId: track.videoId)
             guard self.current?.videoId == track.videoId else { return }
             let reason = probed ?? (detail.isEmpty ? "The stream stopped." : detail)
+            DebugLog.log("player", "stream probe \(track.videoId): \(reason)")
             self.errorMessage = "Can't play “\(track.title)” — \(reason)"
         }
+    }
+
+    /// Connectivity returned and the current track never started (or died
+    /// while offline): quietly try again. Called by RootView whenever
+    /// NetworkMonitor flips back online.
+    func retryIfBroken() {
+        guard streamBroken, current != nil else { return }
+        DebugLog.log("player", "back online — retrying \(current?.videoId ?? "?")")
+        retry()
     }
 
     private func advance(manual: Bool) {
@@ -604,14 +657,29 @@ final class Player {
             if Task.isCancelled { return }
             self.lyricsLoading = true
             defer { self.lyricsLoading = false }
+            let started = Date()
             do {
                 let detail = try await self.api.trackDetail(track.videoId, provider: provider)
                 if Task.isCancelled { return }
+                DebugLog.log(
+                    "lyrics",
+                    "\(track.videoId) → \(detail.lyrics?.synced?.count ?? 0) timed lines in \(String(format: "%.1f", Date().timeIntervalSince(started)))s"
+                )
+                // The payload carries a real duration the search results often
+                // lack — a 0-length scrubber otherwise never moves.
+                if self.duration <= 0,
+                    let seconds = detail.track.durationSeconds
+                        ?? parseDurationSeconds(detail.track.durationLabel)
+                {
+                    self.duration = Double(seconds)
+                    self.syncNowPlaying()
+                }
                 self.lyrics = Self.resolveLyrics(detail.lyrics, wantSynced: wantSynced)
             } catch is CancellationError {
                 return
             } catch {
                 if Task.isCancelled { return }
+                DebugLog.log("lyrics", "\(track.videoId) failed: \(error.localizedDescription)")
                 self.lyrics = nil
             }
             self.pushLiveActivity(force: true)
@@ -746,6 +814,7 @@ final class Player {
 
     /// Center-cropped square artwork for a track — the media session's 1:1
     /// image. Downloaded copy first (no network), then the payload artwork.
+    /// Also where the adaptive accent is read out of the cover's pixels.
     func squareArtwork(for track: Track) async -> UIImage? {
         if let cached = artworkCache[track.videoId] { return cached }
         var image: UIImage?
@@ -763,8 +832,33 @@ final class Player {
         if artworkCache.count > 30, let stale = artworkCache.keys.first(where: { $0 != track.videoId }) {
             artworkCache.removeValue(forKey: stale)
         }
+        updateAdaptiveColor(videoId: track.videoId, image: square)
         if current?.videoId == track.videoId { syncNowPlaying() }
         return square
+    }
+
+    /// Read the cover's accent (ArtworkPalette — the frontend algorithm) and
+    /// publish it for `Color.carmen`. Cached per videoId; "" means "no
+    /// readable colour" so a grey cover is never re-scanned.
+    private func updateAdaptiveColor(videoId: String, image: UIImage) {
+        if let cached = adaptiveHexCache[videoId] {
+            applyAdaptiveColor(hex: cached.isEmpty ? nil : cached)
+            return
+        }
+        let hex = ArtworkPalette.accentHex(of: image) ?? ""
+        adaptiveHexCache[videoId] = hex
+        if adaptiveHexCache.count > 30 {
+            adaptiveHexCache.removeValue(forKey: adaptiveHexCache.keys.first { $0 != videoId } ?? "")
+        }
+        DebugLog.log("palette", "\(videoId) → \(hex.isEmpty ? "none" : hex)")
+        applyAdaptiveColor(hex: hex.isEmpty ? nil : hex)
+    }
+
+    private func applyAdaptiveColor(hex: String?) {
+        guard current?.videoId != nil else { return }
+        if adaptiveColorHex != hex {
+            adaptiveColorHex = hex
+        }
     }
 
     /// Crop a rectangle down to its centered square (what the system views
@@ -780,8 +874,10 @@ final class Player {
 
     /// Attach an `MPMediaItemAnimatedArtwork` (iOS 26) when the track has
     /// motion artwork. The system calls the handlers later: the preview must
-    /// return a square image fast; the video handler may download the mp4 and
-    /// must answer with a *local* file URL.
+    /// return a square image fast; the video handler answers with a *local*
+    /// file URL (MotionArtwork's disk cache, prefetched when the URL resolved).
+    /// The object itself is cached — syncNowPlaying runs every second while
+    /// playing, and rebuilding the artwork each time churns the lock screen.
     private func animatedArtwork(_ dict: [String: Any], track: Track, motionURL: String) -> [String: Any] {
         guard #available(iOS 26.0, *) else { return dict }
         guard MPNowPlayingInfoCenter.supportedAnimatedArtworkKeys.contains(
@@ -790,7 +886,12 @@ final class Player {
 
         let preview = artworkCache[track.videoId]
         let artworkID = "carmen.\(track.album?.id ?? track.videoId)"
+        let cacheKey = "\(artworkID)|\(motionURL)"
         var updated = dict
+        if let cached = animatedArtworkCache[cacheKey] as? MPMediaItemAnimatedArtwork {
+            updated[MPNowPlayingInfoProperty1x1AnimatedArtwork] = cached
+            return updated
+        }
         let animated = MPMediaItemAnimatedArtwork(
             artworkID: artworkID,
             previewImageRequestHandler: { [weak self] _ in
@@ -802,6 +903,10 @@ final class Player {
                 await MotionArtwork.localFile(urlString: motionURL, id: artworkID)
             }
         )
+        animatedArtworkCache[cacheKey] = animated
+        if animatedArtworkCache.count > 8, let stale = animatedArtworkCache.keys.first(where: { $0 != cacheKey }) {
+            animatedArtworkCache.removeValue(forKey: stale)
+        }
         updated[MPNowPlayingInfoProperty1x1AnimatedArtwork] = animated
         return updated
     }
@@ -863,7 +968,9 @@ final class Player {
 
     /// Walk the Apple-catalogue chain for the track's motion cover (album
     /// browse id → iTunes collection → mp4). "No motion art" caches too, so
-    /// a track is only ever looked up once.
+    /// a track is only ever looked up once. The mp4 itself is prefetched the
+    /// moment the URL resolves — the lock-screen handler then usually just
+    /// re-checks the disk instead of downloading under a 30 s deadline.
     private func resolveMotionArtwork(for track: Track) {
         motionTask?.cancel()
         motionArtworkURL = nil
@@ -872,6 +979,10 @@ final class Player {
             let resolved = await self.motionURL(for: track)
             if Task.isCancelled { return }
             self.motionArtworkURL = resolved
+            if let resolved {
+                DebugLog.log("motion", "\(track.videoId) → \(resolved)")
+                MotionArtwork.prefetch(urlString: resolved, id: "carmen.\(track.album?.id ?? track.videoId)")
+            }
             self.syncNowPlaying()  // pick the animated artwork up (or drop it)
         }
     }

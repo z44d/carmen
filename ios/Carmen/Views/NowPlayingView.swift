@@ -8,14 +8,21 @@
 //  has any, growing with the sheet), metadata with a favorite heart, the
 //  scrubber, transport with shuffle/repeat, and the Lyrics / Queue /
 //  Related action pill that swaps the content area for a panel with a
-//  compact card above it — the web client's panel takeover. Liquid Glass via
-//  the Glass.swift wrappers; the player is always a dark surface, so the
-//  content is evaluated as dark regardless of system appearance.
+//  compact card + playing bar above it — the web client's panel takeover,
+//  with the scrubber and transport always one glance away.
+//
+//  Theming is ambient: the blurred cover fills the background and, when
+//  Settings → Appearance → Adaptive Accent is on, the cover's own colour
+//  washes the whole player so the surface belongs to the record. Panels
+//  stay transparent over that wash instead of masking it with a material.
+//  Liquid Glass via the Glass.swift wrappers; the player is always a dark
+//  surface, so the content is evaluated as dark regardless of system
+//  appearance.
 //
 
 import SwiftUI
 
-private enum PlayerPanel: String, CaseIterable, Identifiable {
+enum PlayerPanel: String, CaseIterable, Identifiable {
     case lyrics, queue, related
 
     var id: String { rawValue }
@@ -57,19 +64,28 @@ struct NowPlayingView: View {
                 Color.clear
             }
         }
+        .onAppear {
+            // A panel the player asked for (mini-bar queue button, Related
+            // tap while playing) — open straight into it once.
+            if let panel = player.pendingPanel {
+                activePanel = panel
+                player.pendingPanel = nil
+            }
+        }
     }
 
     // MARK: Layout
 
     private func content(for track: Track) -> some View {
         ZStack {
-            NowPlayingBackground(track: track)
+            NowPlayingBackground(track: track, tint: player.adaptiveColor)
 
             VStack(spacing: 0) {
                 header
 
                 if let panel = activePanel {
                     compactCard(for: track)
+                    playingBar
                     panelBody(panel)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -158,7 +174,9 @@ struct NowPlayingView: View {
             if let motionURL = player.motionArtworkURL {
                 MotionArtworkView(
                     urlString: motionURL,
-                    artworkID: "carmen.\(track.album?.id ?? track.videoId)"
+                    artworkID: "carmen.\(track.album?.id ?? track.videoId)",
+                    staticURL: track.artwork,
+                    staticFallbackURL: track.artworkAlt
                 )
             } else {
                 ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 12)
@@ -307,6 +325,71 @@ struct NowPlayingView: View {
         .padding(.bottom, 14)
     }
 
+    /// Panel mode keeps the scrubber + transport alive under the compact
+    /// card (queueing songs shouldn't stop you from skipping or seeking).
+    private var playingBar: some View {
+        VStack(spacing: 2) {
+            Slider(
+                value: Binding(
+                    get: { isScrubbing ? scrubTime : player.currentTime },
+                    set: { scrubTime = $0 }
+                ),
+                in: 0...max(player.duration, 1)
+            ) { editing in
+                isScrubbing = editing
+                if !editing { player.seek(to: scrubTime) }
+            }
+            .tint(.white)
+
+            HStack(spacing: 0) {
+                Button {
+                    player.previous()
+                } label: {
+                    Image(systemName: "backward.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .opacity(player.hasPrevious ? 1 : 0.35)
+
+                Button {
+                    player.togglePlayPause()
+                } label: {
+                    ZStack {
+                        Circle()
+                            .fill(.primary.opacity(0.12))
+                        if player.isBuffering {
+                            ProgressView()
+                                .controlSize(.regular)
+                        } else {
+                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
+                                .font(.system(size: 20))
+                                .foregroundStyle(.primary)
+                                .offset(x: player.isPlaying ? 0 : 1.5)
+                        }
+                    }
+                    .frame(width: 44, height: 44)
+                    .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+
+                Button {
+                    player.next()
+                } label: {
+                    Image(systemName: "forward.fill")
+                        .font(.system(size: 20))
+                        .foregroundStyle(.primary)
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.plain)
+                .opacity(player.hasNext ? 1 : 0.35)
+            }
+        }
+        .padding(.horizontal, 24)
+        .padding(.bottom, 10)
+    }
+
     // MARK: Panels
 
     /// The glass pill: Lyrics / Queue / Related cells + the download control.
@@ -375,12 +458,23 @@ struct NowPlayingView: View {
         .padding(.bottom, 10)
     }
 
-    /// Panels float over the blurred backdrop: hide the Lists' own background
-    /// and let a material show through (the web client's translucent panel).
+    /// Panels float over the ambient wash: a clear → black scrim dims the
+    /// backdrop toward the list without ever masking the album theme with a
+    /// material (the web client's translucent panel).
     private func panelBody(_ panel: PlayerPanel) -> some View {
         panelContent(panel)
             .scrollContentBackground(.hidden)
-            .background(.ultraThinMaterial)
+            .background(
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.35), location: 0.35),
+                        .init(color: .black.opacity(0.6), location: 1),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+            )
     }
 
     @ViewBuilder
@@ -393,9 +487,13 @@ struct NowPlayingView: View {
     }
 }
 
-/// Blurred artwork (or a dark gradient) filling the whole player.
+/// Blurred artwork (or a dark gradient) filling the whole player, with the
+/// cover's own colour washed over it — the ambient theme the frontend calls
+/// "adaptive".
 private struct NowPlayingBackground: View {
     let track: Track
+    /// The playing cover's accent (nil = keep the default dark surface).
+    var tint: Color?
 
     var body: some View {
         ZStack {
@@ -415,7 +513,11 @@ private struct NowPlayingBackground: View {
                 gradient
             }
 
-            Color.black.opacity(0.45)
+            if let tint {
+                // One hue for the whole player, following the artwork.
+                tint.opacity(0.4)
+            }
+            Color.black.opacity(tint == nil ? 0.45 : 0.28)
         }
         .ignoresSafeArea()
     }
