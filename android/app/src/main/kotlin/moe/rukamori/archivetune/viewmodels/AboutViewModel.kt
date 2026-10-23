@@ -423,7 +423,7 @@ class AboutViewModel
                     TeamMember(
                         avatarUrl = "https://avatars.githubusercontent.com/u/162994967?v=4",
                         name = "z44d",
-                        positionResId = R.string.about_position_lead_dev,
+                        positionResId = R.string.about_position_lead,
                         profileUrl = "https://github.com/z44d",
                         links =
                             AboutLinkCollection.of(

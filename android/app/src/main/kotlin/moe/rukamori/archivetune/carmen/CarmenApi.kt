@@ -198,6 +198,41 @@ class CarmenApi
         private fun cdnArtwork(videoId: String?): String? =
             videoId?.takeIf { it.isNotEmpty() }?.let { "https://i.ytimg.com/vi/$it/maxresdefault.jpg" }
 
+        private fun isSquare544(obj: JsonObject): Boolean {
+            val w = obj["width"].int()
+            val h = obj["height"].int()
+            return w == 544 && h == 544
+        }
+
+        /**
+         * The server's real song thumbnail: prefer the square 544×544 cover
+         * from the track's `thumbnails` list, else the last entry (latest in
+         * index). Only when the payload carries no thumbnails at all does the
+         * i.ytimg CDN url (`maxresdefault`) take over.
+         */
+        private fun pickSongArtwork(
+            obj: JsonObject,
+            videoId: String?,
+            keys: Array<out String>,
+        ): String? {
+            val candidates = mutableListOf<JsonObject>()
+            for (key in keys) {
+                val list = obj[key] as? JsonArray ?: continue
+                for (item in list) {
+                    val thumb = item as? JsonObject ?: continue
+                    if (thumb["url"].maybeStr().isNullOrBlank()) continue
+                    candidates.add(thumb)
+                }
+            }
+            if (candidates.isNotEmpty()) {
+                candidates.firstOrNull(::isSquare544)?.let { return it["url"]!!.maybeStr() }
+                val last = candidates.last()
+                val lastUrl = last["url"]!!.jsonPrimitive.content
+                if (!isWebP(lastUrl)) return lastUrl
+            }
+            return cdnArtwork(videoId)
+        }
+
         // ------------------------------------------------------------------
         // Normalization → core innertube models
         // ------------------------------------------------------------------
@@ -216,7 +251,10 @@ class CarmenApi
                 seconds = parseDurationSeconds(obj["duration"].maybeStr() ?: obj["length"].maybeStr())
             }
 
-            val thumbnail = cdnArtwork(videoId) ?: pickArtwork(obj, "thumbnails", "thumbnail", "artwork").orEmpty()
+            val thumbnail =
+                pickSongArtwork(obj, videoId, arrayOf("thumbnails", "thumbnail", "artwork"))
+                    ?: pickArtwork(obj, "thumbnails", "thumbnail", "artwork")
+                    ?: ""
 
             return SongItem(
                 id = videoId,
@@ -251,7 +289,9 @@ class CarmenApi
                         artists = artists,
                         album = parseAlbum(obj["album"]),
                         duration = obj["duration_seconds"].int() ?: parseDurationSeconds(obj["duration"].maybeStr()),
-                        thumbnail = cdnArtwork(videoId) ?: artwork.orEmpty(),
+                        thumbnail =
+                            pickSongArtwork(obj, videoId, arrayOf("thumbnails", "thumbnail", "artwork"))
+                                ?: artwork.orEmpty(),
                         explicit = obj["isExplicit"].bool() ?: false,
                     )
 

@@ -692,13 +692,10 @@
     <string name="ai_api_test_failed">Uji API gagal</string>
     <string name="ai_translation_menu">Terjemahan AI</string>
     <string name="about_lead_developer">Pengembang Utama</string>
-    <string name="about_archive_tune_team">Tim</string>
-    <string name="about_respecter">Penghargaan</string>
     <string name="about_contributors">Kontributor</string>
     <string name="about_contributor_translation">Kontributor Terjemahan</string>
     <string name="about_license">LICENSE</string>
     <string name="about_license_unknown">Lisensi tidak diketahui</string>
-    <string name="about_position_lead_dev">Eh?</string>
     <string name="about_position_developers">Pengembang | Tim</string>
     <string name="about_position_yuki">reze bodoh | Admin</string>
     <string name="about_position_mo_agamy">Framework Dasar | Metrolist</string>

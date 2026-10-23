@@ -630,13 +630,10 @@
     <string name="ai_provider_openrouter"></string>
     <string name="ai_translation_menu">YZ Çeviri</string>
     <string name="about_lead_developer">Baş Geliştirici</string>
-    <string name="about_archive_tune_team">Ekip</string>
-    <string name="about_respecter">Saygılarımızla</string>
     <string name="about_contributors">Katkıda bulunanlar</string>
     <string name="about_contributor_translation">Çeviride katkıda bulunanlar</string>
     <string name="about_license">LİSANLAR</string>
     <string name="about_license_unknown">Bilinmeyen lisans</string>
-    <string name="about_position_lead_dev">Ha?</string>
     <string name="about_position_developers">Geliştirici | Ekip</string>
     <string name="about_position_yuki">dummy reze | Yönetici</string>
     <string name="about_position_mo_agamy">Ana Taban | Metrolist</string>

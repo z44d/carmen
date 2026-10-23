@@ -59,6 +59,10 @@ object LyricsUtils {
             UnicodeScript.KATAKANA,
             UnicodeScript.HANGUL,
             UnicodeScript.DEVANAGARI,
+            // Arabic lyrics are never romanized — the ICU transliteration
+            // ("Any-Latin") would only paint a Latin transcription below
+            // the original line.
+            UnicodeScript.ARABIC,
         )
     private val genericRomanizationTransliterator =
         ThreadLocal.withInitial {
@@ -1117,6 +1121,8 @@ object LyricsUtils {
             "ko" -> preferences.romanizeKorean
             "zh", "cmn", "yue" -> preferences.romanizeChinese
             "hi", "sa", "mr", "ne" -> preferences.romanizeHindi
+            // Provider-claimed Arabic romanizations are dropped too.
+            "ar" -> false
             null, "" -> shouldRomanizeLyricsLine(originalText, preferences)
             else -> preferences.romanizeOther || shouldRomanizeLyricsLine(originalText, preferences)
         }

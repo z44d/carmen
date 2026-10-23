@@ -605,13 +605,10 @@
     <string name="ai_api_test_failed">فشل اختبار API</string>
     <string name="ai_translation_menu">ترجمة الذكاء الاصطناعي</string>
     <string name="about_lead_developer">المطور الرئيسي</string>
-    <string name="about_archive_tune_team">الفريق</string>
-    <string name="about_respecter">داعم</string>
     <string name="about_contributors">المساهمون</string>
     <string name="about_contributor_translation">ترجمة المساهمين</string>
     <string name="about_license">الترخيص</string>
     <string name="about_license_unknown">ترخيص مجهول</string>
-    <string name="about_position_lead_dev">ماذا؟</string>
     <string name="about_position_developers">مطور | الفريق</string>
     <string name="about_position_yuki">dummy reze | مسؤول</string>
     <string name="about_position_mo_agamy">الإطار الأساسي | Metrolist</string>

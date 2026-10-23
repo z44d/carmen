@@ -206,7 +206,7 @@ fun AppearanceSettings(navController: NavController) {
     val (configuredLyricsBackground, onLyricsBackgroundChange) =
         rememberEnumPreference(
             LyricsBackgroundStyleKey,
-            defaultValue = LyricsBackgroundStyle.DEFAULT,
+            defaultValue = LyricsBackgroundStyle.COLORING,
         )
     val (miniPlayerBackground, onMiniPlayerBackgroundChange) =
         rememberEnumPreference(

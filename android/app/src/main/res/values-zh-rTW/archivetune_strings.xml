@@ -557,13 +557,10 @@
     <string name="ai_api_test_failed">API 測試失敗</string>
     <string name="ai_translation_menu">AI 翻譯</string>
     <string name="about_lead_developer">首席開發人員</string>
-    <string name="about_archive_tune_team">團隊</string>
-    <string name="about_respecter">特別鳴謝</string>
     <string name="about_contributors">貢獻者</string>
     <string name="about_contributor_translation">翻譯貢獻者</string>
     <string name="about_license">授權條款</string>
     <string name="about_license_unknown">未知條款</string>
-    <string name="about_position_lead_dev">Eh?</string>
     <string name="about_position_developers">開發者 | 團隊</string>
     <string name="about_position_yuki">純屬擺拍 😂 | 管理員</string>
     <string name="about_position_mo_agamy">基礎架構 | Metrolist</string>

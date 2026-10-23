@@ -88,7 +88,7 @@ import javax.inject.Inject
 
 /** Home quick-picks layout limits for the Carmen suggestion mode. */
 private const val CARMEN_RECENTS_LIMIT = 10
-private const val CARMEN_SUGGESTIONS_LIMIT = 24
+private const val CARMEN_SUGGESTIONS_LIMIT = 100
 
 sealed interface AccountChannelsState {
     data object Loading : AccountChannelsState
@@ -231,7 +231,7 @@ class HomeViewModel
         private val quickPicksMode =
             context.dataStore.data
                 .map {
-                    it[QuickPicksKey].toEnum(QuickPicks.QUICK_PICKS)
+                    it[QuickPicksKey].toEnum(QuickPicks.CARMEN_SUGGESTIONS)
                 }.distinctUntilChanged()
 
         private val quickPicks = MutableStateFlow<List<Song>?>(null)
@@ -525,8 +525,9 @@ class HomeViewModel
                 }
 
         /**
-         * Carmen's quick picks: the 10 most-recent tracks plus a sample of the
-         * harvested suggestion pool (up to 24 visible tiles at once).
+         * Carmen's quick picks: the 10 most-recent tracks plus up to 100
+         * shuffled suggestions harvested from the related songs of every
+         * played track — home never hits `/browsing/home` in this mode.
          */
         private fun carmenSuggestionsFlow(): Flow<List<Song>> =
             combine(
@@ -541,7 +542,7 @@ class HomeViewModel
             poolIds: List<String>,
         ): List<Song> {
             val recentIds = recents.map { it.id }.toHashSet()
-            val suggestionIds = poolIds.filterNot { it in recentIds }.take(CARMEN_SUGGESTIONS_LIMIT)
+            val suggestionIds = poolIds.filterNot { it in recentIds }.shuffled().take(CARMEN_SUGGESTIONS_LIMIT)
             val byId =
                 if (suggestionIds.isEmpty()) {
                     emptyMap()
@@ -722,6 +723,11 @@ class HomeViewModel
                     }
 
                     launch {
+                        // In the Carmen suggestions mode home is fully local
+                        // (recents + the harvested pool) — /browsing/home is
+                        // never fetched and its shelves are not rendered.
+                        if (quickPicksMode.first() == QuickPicks.CARMEN_SUGGESTIONS) return@launch
+
                         // Carmen API is the primary home source; the free
                         // YouTube endpoints are a silent secondary.
                         val page =

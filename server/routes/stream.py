@@ -526,7 +526,7 @@ def _is_whole_body(status_code: int, range_header: str | None, headers) -> bool:
 
 async def _proxy_audio(
     request: Request, target: StreamTarget, vid_id: str
-) -> StreamingResponse:
+) -> StreamingResponse | Response:
     """
     Relay the CDN response to the browser, range requests included.
 
@@ -536,6 +536,15 @@ async def _proxy_audio(
 
     While a *complete* body passes through it is also written into the audio
     cache, so the next play of that track is served from disk.
+
+    A ``416`` from the CDN is not passed back to the player.  Some resolved
+    URLs (formats whose own ``range=`` query parameter collides with the
+    client ``Range`` header) answer ``416`` to an offset the player will
+    never give up on, and the client reports it as a *Source error*.  In
+    that case the body is fetched again without the ``Range`` header and the
+    requested offset is sliced off in flight — the client gets a normal
+    ``206`` from ``Content-Range``, the bytes start at the right place and
+    the complete body still lands in the audio cache.
     """
     upstream_headers = dict(target.headers or {})
     upstream_headers.pop("Host", None)
@@ -553,11 +562,63 @@ async def _proxy_audio(
         stream=True,
     )
 
+    # Try to rescue a CDN 416 by fetching the body without a Range header
+    # and skipping to the requested offset while streaming.  A first-byte
+    # offset (``bytes=0-``) is simply refetched without the header, which
+    # turns the response into a normal 200 whole-body.
+    slice_start = 0
+    if upstream.status_code == 416 and range_header:
+        match = re.match(r"\s*bytes=(\d+)-", range_header.strip())
+        if match:
+            slice_start = int(match.group(1))
+            await upstream.aclose()
+            upstream_headers.pop("Range", None)
+            upstream = await client.send(
+                client.build_request("GET", target.url, headers=upstream_headers),
+                stream=True,
+            )
+            log.info(
+                "CDN answered 416 for %s (range=%s, client=%s) — refetching without it",
+                vid_id,
+                range_header,
+                target.client,
+            )
+
     if upstream.status_code in _REJECTED_STATUS:
         status = upstream.status_code
         await upstream.aclose()
         await client.aclose()
         raise _UpstreamRejected(f"upstream responded with {status}")
+
+    if upstream.status_code in _REJECTED_STATUS:
+        status = upstream.status_code
+        await upstream.aclose()
+        await client.aclose()
+        raise _UpstreamRejected(f"upstream responded with {status}")
+
+    if slice_start:
+        # The rescue reopen succeeded or not — a now-rejected status is the
+        # same "another player client may fix this" situation as before.
+        if upstream.status_code >= 400:
+            status = upstream.status_code
+            await upstream.aclose()
+            await client.aclose()
+            raise _UpstreamRejected(f"upstream responded with {status}")
+        full_length = (upstream.headers.get("content-length") or "").strip()
+        total = int(full_length) if full_length.isdigit() else None
+        if total is not None and slice_start >= total:
+            # The requested offset is beyond the real end of the stream: no
+            # byte can be served for it.  Answer the client's bookkeeping
+            # with the honest 416 + Content-Range instead of an empty body.
+            log.warning(
+                "Range start %d is past the end of %s (%d bytes)",
+                slice_start,
+                vid_id,
+                total,
+            )
+            await upstream.aclose()
+            await client.aclose()
+            return Response(416, headers={"Content-Range": f"bytes */{total}"})
 
     headers = {
         key: value
@@ -567,9 +628,24 @@ async def _proxy_audio(
     headers.setdefault("accept-ranges", "bytes")
     headers["X-Accel-Buffering"] = "no"
 
+    status_code = upstream.status_code
+    if slice_start:
+        # Serve the refetched whole body as a range response so the client's
+        # offsets keep matching its own bookkeeping.
+        status_code = 206
+        if total is not None:
+            headers["content-length"] = str(total - slice_start)
+            headers["content-range"] = f"bytes {slice_start}-{total - 1}/{total}"
+        else:
+            # Without a known total a Content-Range cannot be trusted — drop
+            # the stale full-body length too, rather than underline wrong.
+            headers.pop("content-length", None)
+
     tee_path: Path | None = None
     tmp_path: Path | None = None
-    if _is_whole_body(upstream.status_code, range_header, upstream.headers):
+    # The 416 rescue re-downloaded the *complete* body, so a tee is always
+    # worth it there; `_is_whole_body(downstream_status_code=200)` covers it.
+    if slice_start or _is_whole_body(upstream.status_code, range_header, upstream.headers):
         AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_path = AUDIO_CACHE_DIR / f"{vid_id}.{uuid.uuid4().hex}.part"
         tee_path = AUDIO_CACHE_DIR / f"{vid_id}.m4a"
@@ -582,11 +658,20 @@ async def _proxy_audio(
         # behind on disk, and it is closed by the `finally` below either way
         handle = _open_tee(tmp_path)[0] if tmp_path else None
         tee_ok = handle is not None
+        tee_size = 0
+        skip = slice_start
         try:
             async for chunk in upstream.aiter_raw(_CHUNK):
+                if skip:
+                    if len(chunk) <= skip:
+                        skip -= len(chunk)
+                        continue
+                    chunk = chunk[skip:]
+                    skip = 0
                 if handle is not None and tee_ok:
                     try:
                         handle.write(chunk)
+                        tee_size += len(chunk)
                     except OSError:
                         # disk trouble must never break playback
                         tee_ok = False
@@ -600,7 +685,10 @@ async def _proxy_audio(
                 except (OSError, ValueError):
                     tee_ok = False
                 expected = int(upstream.headers.get("content-length") or 0)
-                if tee_ok and expected and written == expected and tmp_path and tee_path:
+                # `written` may be short when the client asked for a mid-file
+                # offset, so completeness is measured against what reached the
+                # tee (the full upstream body) instead.
+                if tee_ok and expected and tee_size == expected and tmp_path and tee_path:
                     os.replace(tmp_path, tee_path)
                     _prune_audio_cache()
                     # Background: the relay only ever runs when the disk
@@ -608,7 +696,7 @@ async def _proxy_audio(
                     # Telegram cache its copy too.
                     asyncio.create_task(_ensure_tg_copy(vid_id, tee_path))
                     log.info(
-                        "Cached streamed audio for %s (%d bytes)", vid_id, written
+                        "Cached streamed audio for %s (%d bytes)", vid_id, tee_size
                     )
                 elif tmp_path:
                     tmp_path.unlink(missing_ok=True)
@@ -617,7 +705,7 @@ async def _proxy_audio(
 
     return StreamingResponse(
         pump(),
-        status_code=upstream.status_code,
+        status_code=status_code,
         headers=headers,
         media_type=_media_type(upstream.headers, target.url),
     )

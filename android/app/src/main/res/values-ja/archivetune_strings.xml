@@ -677,13 +677,10 @@
     <string name="ai_api_test_failed">APIテストに失敗しました</string>
     <string name="ai_translation_menu">AI翻訳</string>
     <string name="about_lead_developer">主任開発者</string>
-    <string name="about_archive_tune_team">チーム</string>
-    <string name="about_respecter">リスペクター</string>
     <string name="about_contributors">貢献者</string>
     <string name="about_contributor_translation">寄稿者の翻訳</string>
     <string name="about_license">ライセンス</string>
     <string name="about_license_unknown">不明なライセンス</string>
-    <string name="about_position_lead_dev">Eh?</string>
     <string name="about_position_developers">開発者 |チーム</string>
     <string name="about_position_yuki">ダミーレゼ |管理者</string>
     <string name="about_position_mo_agamy">基本フレームワーク |メトロリスト</string>

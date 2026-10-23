@@ -706,15 +706,13 @@
     <string name="ai_api_test_failed">API test failed</string>
     <string name="ai_translation_menu">AI Translation</string>
     <string name="about_lead_developer">Lead Developer</string>
-    <string name="about_archive_tune_team">Team</string>
-    <string name="about_respecter">Respecter</string>
+    <string name="about_position_lead">Carmen Lead Developer</string>
     <string name="about_contributors">Contributors</string>
     <string name="about_translation_contributors_error">Couldn’t load translation credits.</string>
     <string name="about_contributor_translation">Contributor Translation</string>
     <string name="about_license">LICENSE</string>
     <string name="about_license_unknown">Unknown license</string>
         <string name="about_position_archive_dir">ArchiveTune developer</string>
-<string name="about_position_lead_dev">Eh?</string>
     <string name="about_position_developers">Developer | Team</string>
     <string name="about_position_yuki">dummy reze | Admin</string>
     <string name="about_position_mo_agamy">Base Framework | Metrolist</string>

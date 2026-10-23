@@ -58,6 +58,68 @@ import moe.rukamori.archivetune.viewmodels.AiContentFilterSettingsState
 import moe.rukamori.archivetune.viewmodels.ContentSettingsViewModel
 import java.util.Locale
 
+/**
+ * UI languages the app ships translations for (mirrors the `values-*` resource
+ * folders). The app falls back to English on any tag it cannot render.
+ */
+private val AppSupportedLanguageTags =
+    listOf(
+        "en",
+        "ar",
+        "apc",
+        "as",
+        "az",
+        "azb",
+        "cs",
+        "de-DE",
+        "es",
+        "et",
+        "fa",
+        "fr",
+        "hi",
+        "hu",
+        "in",
+        "it",
+        "ja",
+        "jv",
+        "kmr",
+        "ko",
+        "mai",
+        "ml",
+        "ms",
+        "my",
+        "nl",
+        "pl",
+        "pt",
+        "pt-BR",
+        "ro",
+        "ru",
+        "sa",
+        "sc",
+        "si",
+        "sl",
+        "sv",
+        "ta",
+        "th",
+        "tl",
+        "tr",
+        "uk",
+        "ur",
+        "uz",
+        "vi",
+        "zh-CN",
+        "zh-TW",
+    )
+
+/** Native display name of a supported app language tag, e.g. `fr` → `français`. */
+private fun appLanguageLabel(tag: String): String {
+    val locale = Locale.forLanguageTag(tag)
+    val base = locale.getDisplayLanguage(locale).ifBlank { tag }
+    val named = base.equals(tag, ignoreCase = true)
+    val name = if (named) tag else base.replaceFirstChar { it.uppercase(locale) }
+    return if (locale.country.isBlank()) name else "$name (${locale.country})"
+}
+
 @Composable
 fun ContentSettings(
     navController: NavController,
@@ -82,6 +144,7 @@ fun ContentSettings(
     }
 
     val (useSystemLanguage, onUseSystemLanguageChange) = rememberPreference(key = UseSystemLanguageKey, defaultValue = true)
+    val (appLanguage, onAppLanguageChange) = rememberPreference(key = AppLanguageKey, defaultValue = "en")
 
     val (contentLanguage, onContentLanguageChange) = rememberPreference(key = ContentLanguageKey, defaultValue = "system")
     val (contentCountry, onContentCountryChange) = rememberPreference(key = ContentCountryKey, defaultValue = "system")
@@ -211,10 +274,30 @@ fun ContentSettings(
                     checked = useSystemLanguage,
                     onCheckedChange = { checked ->
                         onUseSystemLanguageChange(checked)
-                        val newLocale = if (checked) Locale.getDefault() else Locale.ENGLISH
+                        val newLocale =
+                            if (checked) {
+                                Locale.getDefault()
+                            } else {
+                                Locale.forLanguageTag(appLanguage)
+                            }
                         setAppLocale(context, newLocale)
                         (context as? android.app.Activity)?.recreate()
                     },
+                )
+            }
+            item {
+                ListPreference(
+                    title = { Text(stringResource(R.string.app_language)) },
+                    icon = { Icon(painterResource(R.drawable.translate), null) },
+                    selectedValue = appLanguage,
+                    values = AppSupportedLanguageTags,
+                    valueText = { appLanguageLabel(it) },
+                    onValueSelected = { newTag ->
+                        onAppLanguageChange(newTag)
+                        setAppLocale(context, Locale.forLanguageTag(newTag))
+                        (context as? android.app.Activity)?.recreate()
+                    },
+                    isEnabled = !useSystemLanguage,
                 )
             }
         }

@@ -4009,14 +4009,15 @@ class MusicService :
                     }.forEach(::insert)
             }
         }
-        // Carmen suggestion pool: harvest the first 10 related songs of every
+        // Carmen suggestion pool: harvest 5 random related songs of every
         // play and drop the played song itself from the pool.
         if (database.hasRelatedSongs(mediaId)) {
             val harvestIds =
                 database
                     .getRelatedSongs(mediaId)
                     .first()
-                    .take(10)
+                    .shuffled()
+                    .take(5)
                     .map { it.id }
                     .filterNot { it == mediaId }
             if (harvestIds.isNotEmpty()) CarmenSuggestions.harvest(this, harvestIds)

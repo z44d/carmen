@@ -582,6 +582,18 @@ class MainActivity : ComponentActivity() {
         }
     }
 
+    /** The app UI locale chosen in Settings (defaults to English), used when "Use system language" is off. */
+    private fun selectedAppLocale(storedTag: String? = null): Locale =
+        storedTag
+            ?.takeIf { it.isNotBlank() }
+            ?.let { tag ->
+                runCatching {
+                    Locale.forLanguageTag(tag)
+                }.getOrNull()
+            }
+            ?.takeIf { it.language.isNotBlank() }
+            ?: Locale.ENGLISH
+
     @SuppressLint("UnusedMaterial3ScaffoldPaddingParameter")
     @OptIn(ExperimentalMaterial3Api::class)
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -593,7 +605,7 @@ class MainActivity : ComponentActivity() {
             if (PreferenceStore.get(UseSystemLanguageKey) ?: true) {
                 Locale.getDefault()
             } else {
-                Locale.ENGLISH
+                selectedAppLocale(PreferenceStore.get(AppLanguageKey))
             }
         setAppLocale(this, initialLocale)
 
@@ -603,7 +615,7 @@ class MainActivity : ComponentActivity() {
                     if (prefs[UseSystemLanguageKey] ?: true) {
                         Locale.getDefault()
                     } else {
-                        Locale.ENGLISH
+                        selectedAppLocale(prefs[AppLanguageKey])
                     }
                 }
             }.onSuccess { targetLocale ->

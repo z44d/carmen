@@ -551,13 +551,10 @@
     <string name="ai_api_test_failed">Falha no teste da API</string>
     <string name="ai_translation_menu">Tradução por IA</string>
     <string name="about_lead_developer">Desenvolvedor principal</string>
-    <string name="about_archive_tune_team">Equipe</string>
-    <string name="about_respecter">Respeito</string>
     <string name="about_contributors">Contribuidores</string>
     <string name="about_contributor_translation">Contribuidores da Tradução</string>
     <string name="about_license">LICENÇA</string>
     <string name="about_license_unknown">Licença desconhecida</string>
-    <string name="about_position_lead_dev">Eh?</string>
     <string name="about_position_developers">Desenvolvedor | Equipe</string>
     <string name="about_position_yuki">reze idiota | Admin</string>
     <string name="about_position_mo_agamy">Framework base | Metrolist</string>

@@ -171,7 +171,7 @@ fun LyricsScreen(
     val (enableHapticFeedback) = rememberPreference(EnableHapticFeedbackKey, true)
     val lyricsMode by rememberEnumPreference(LyricsModeKey, LyricsMode.ENHANCED)
     val playerBackground by rememberEnumPreference(PlayerBackgroundStyleKey, PlayerBackgroundStyle.DEFAULT)
-    val configuredLyricsBackground by rememberEnumPreference(LyricsBackgroundStyleKey, LyricsBackgroundStyle.DEFAULT)
+    val configuredLyricsBackground by rememberEnumPreference(LyricsBackgroundStyleKey, LyricsBackgroundStyle.COLORING)
     val lyricsBackground = configuredLyricsBackground.resolveFor(playerBackground)
     val disableBlur by rememberPreference(DisableBlurKey, false)
     val blurRadius by rememberPreference(BlurRadiusKey, 48f)

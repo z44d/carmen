@@ -19,10 +19,11 @@ import moe.rukamori.archivetune.utils.dataStore
 /**
  * Carmen's quick-picks suggestion pool.
  *
- * Port of the iOS/Home algorithm: on every play, the first 10 related songs
- * of that track are appended to a FIFO pool capped at the last 100 ids; a
- * track the user plays is removed from it. Home shows the 10 most-recent
- * tracks plus a sample of this pool.
+ * Port of the iOS/Home algorithm: on every play, 5 random related songs of
+ * that track are appended to a FIFO pool capped at the last 100 ids; a track
+ * the user plays is removed from it. Home shows the 10 most-recent tracks
+ * plus up to 100 shuffled suggestions from this pool — /browsing/home is
+ * never used in this mode.
  *
  * Stored in DataStore (JSON string array) — no Room schema churn, and the ids
  * resolve through the existing `song` table at read time.

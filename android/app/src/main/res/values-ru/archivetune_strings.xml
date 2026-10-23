@@ -693,13 +693,10 @@
     <string name="ai_api_test_failed">Тест API не удался</string>
     <string name="ai_translation_menu">Перевод ИИ</string>
     <string name="about_lead_developer">Ведущий разработчик</string>
-    <string name="about_archive_tune_team">Команда</string>
-    <string name="about_respecter">Respecter</string>
     <string name="about_contributors">Участники</string>
     <string name="about_contributor_translation">Перевод участников</string>
     <string name="about_license">ЛИЦЕНЗИЯ</string>
     <string name="about_license_unknown">Неизвестная лицензия</string>
-    <string name="about_position_lead_dev">А?</string>
     <string name="about_position_developers">Разработчик | Команда</string>
     <string name="aod_mode">Режим AOD</string>
     <string name="playlist_source_local">Локальный</string>

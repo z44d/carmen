@@ -549,13 +549,10 @@
     <string name="ai_api_test_failed">فشل اختبار واجهة البرمجة</string>
     <string name="ai_translation_menu">ترجمة الذكاء الاصطناعي</string>
     <string name="about_lead_developer">المطور الرئيسي</string>
-    <string name="about_archive_tune_team">الفريق</string>
-    <string name="about_respecter">داعم</string>
     <string name="about_contributors">المساهمين</string>
     <string name="about_contributor_translation">ترجمة المساهمين</string>
     <string name="about_license">الترخيص</string>
     <string name="about_license_unknown">ترخيص غير معروف</string>
-    <string name="about_position_lead_dev">إيه؟</string>
     <string name="about_position_developers">مطور | فريق</string>
     <string name="about_position_mo_agamy">إطار العمل الأساسي | Metrolist</string>
     <string name="about_position_zion_huang">مبتكر InnerTune · الأساس لـ Metrolist و Carmen والتفرعات التانية</string>

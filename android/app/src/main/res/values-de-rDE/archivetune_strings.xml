@@ -487,7 +487,6 @@
     <string name="about_position_developers">Entwickler | Team</string>
     <string name="about_license">LIZENZ</string>
     <string name="about_contributors">Beitragende</string>
-    <string name="about_archive_tune_team">Team</string>
     <string name="about_content_desc_discord">Discord</string>
     <string name="about_content_desc_github">GitHub</string>
     <string name="about_content_desc_website">Webseite</string>
@@ -583,7 +582,6 @@
     <string name="aod_hold_to_unlock">Halte 1,5 Sekunden zum Entsperren</string>
     <string name="playlist_source_online">Online</string>
     <string name="playlist_source_local">Lokal</string>
-    <string name="about_position_lead_dev">Hä?</string>
     <string name="replace_song">Ersetze Song</string>
     <string name="song_source_changed">Songquelle geändert.</string>
     <string name="import_preparing">Bereite Import vor…</string>
