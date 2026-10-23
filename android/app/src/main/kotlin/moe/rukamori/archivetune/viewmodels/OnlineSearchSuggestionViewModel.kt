@@ -44,6 +44,7 @@ class OnlineSearchSuggestionViewModel
         private val loadAiContentFilterPolicy: LoadAiContentFilterPolicyUseCase,
         private val filterAiContent: FilterAiContentUseCase,
         private val carmenApi: CarmenApi,
+        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         private val query = MutableStateFlow("")
         private val _viewState = MutableStateFlow(SearchSuggestionViewState())
@@ -61,23 +62,25 @@ class OnlineSearchSuggestionViewModel
                             }
                         } else {
                             val result = YouTube.searchSuggestions(query).getOrNull()
-                            // Carmen fallback: suggestions + a few server hits when YouTube fails.
-                            val fallback = {
+                            val aiContentFilterPolicy = loadAiContentFilterPolicy()
+
+                            // Carmen fallback: server suggestions + matching
+                            // song hits when YouTube returns nothing.
+                            val fallbackPair =
                                 if (result == null || (result.queries.isEmpty() && result.recommendedItems.isEmpty())) {
-                                    CarmenFallbackPolicy(context).tryFallback(
-                                        result?.let { IllegalStateException("no suggestions from YouTube") }
-                                            ?: IllegalStateException("YouTube search suggestions failed"),
+                                    carmenFallbackPolicy.tryFallback(
+                                        IllegalStateException("YouTube search suggestions unavailable"),
                                     ) {
-                                        val words = carmenApi.suggestions(query).getOrNull()
-                                        val items = carmenApi.search(query, "songs", limit = 12).getOrNull().orEmpty()
-                                        words to items
+                                        carmenApi.suggestions(query).getOrNull().orEmpty() to
+                                            carmenApi.search(query, "songs", limit = 12).getOrNull().orEmpty()
                                     }
                                 } else {
                                     null
                                 }
-                            }
-                            val (fallbackWords, fallbackItems) = fallback()?.mapBothOrEmpty() ?: (emptyList() to emptyList())
-                            val aiContentFilterPolicy = loadAiContentFilterPolicy()
+
+                            val suggestedWords: List<String> = (result?.queries ?: fallbackPair?.first).orEmpty()
+                            val recommendedItems: List<YTItem> = (result?.recommendedItems ?: fallbackPair?.second).orEmpty()
+
                             database
                                 .searchHistory(query)
                                 .map { it.take(3) }
@@ -85,20 +88,19 @@ class OnlineSearchSuggestionViewModel
                                     SearchSuggestionViewState(
                                         history = history,
                                         suggestions =
-                                            ((result?.queries ?: fallbackWords))
-                                                .filter { queryFilter ->
-                                                    history.none { it.query == queryFilter }
-                                                },
+                                            suggestedWords.filter { word ->
+                                                history.none { it.query == word }
+                                            },
                                         items =
                                             filterAiContent(
-                                                (result?.recommendedItems ?: fallbackItems)
+                                                recommendedItems
                                                     .filterExplicit(
                                                         context.dataStore.get(
                                                             HideExplicitKey,
                                                             false,
                                                         ),
-                                                    )?.filterVideo(context.dataStore.get(HideVideoKey, false))
-                                                    .orEmpty(),
+                                                    )
+                                                    .filterVideo(context.dataStore.get(HideVideoKey, false)),
                                                 aiContentFilterPolicy,
                                             ),
                                     )

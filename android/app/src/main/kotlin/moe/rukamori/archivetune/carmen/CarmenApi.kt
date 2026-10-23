@@ -147,7 +147,7 @@ class CarmenApi
             val array = element as? JsonArray ?: return emptyList()
             return array.mapNotNull { item ->
                 when (item) {
-                    is JsonPrimitive -> item.content.takeIf { it.isNotBlank() }?.let { Artist(name = it) }
+                    is JsonPrimitive -> item.content.takeIf { it.isNotBlank() }?.let { Artist(name = it, id = null) }
                     is JsonObject ->
                         item["name"].maybeStr()?.let { Artist(name = it, id = item["id"].maybeStr()) }
                     else -> null
@@ -278,7 +278,7 @@ class CarmenApi
                         playlistId
                             ?: browseId?.takeIf { it.startsWith("VL") }?.drop(2)
                             ?: return null
-                    val author = obj["author"].maybeStr()?.let { Artist(it) } ?: artists.firstOrNull()?.let { Artist(it.name) }
+                    val author = obj["author"].maybeStr()?.let { Artist(it, id = null) } ?: artists.firstOrNull()?.let { Artist(it.name, id = null) }
                     PlaylistItem(
                         id = id,
                         title = title,
@@ -419,7 +419,7 @@ class CarmenApi
                         PlaylistItem(
                             id = obj["id"].maybeStr() ?: playlistId,
                             title = obj["title"].maybeStr().orEmpty().ifBlank { "Unknown playlist" },
-                            author = obj["author"].maybeStr()?.let { Artist(it) },
+                            author = obj["author"].maybeStr()?.let { Artist(it, id = null) },
                             songCountText = obj["trackCount"].int()?.toString(),
                             thumbnail = pickArtwork(obj, "thumbnails", "thumbnail"),
                             playEndpoint = null,

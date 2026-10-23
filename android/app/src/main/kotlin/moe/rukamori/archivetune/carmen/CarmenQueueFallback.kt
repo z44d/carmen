@@ -8,7 +8,6 @@ package moe.rukamori.archivetune.carmen
 
 import android.content.Context
 import kotlinx.coroutines.flow.first
-import kotlinx.coroutines.flow.firstOrNull
 import moe.rukamori.archivetune.constants.CarmenFallbackKey
 import moe.rukamori.archivetune.innertube.models.WatchEndpoint
 import moe.rukamori.archivetune.innertube.pages.NextResult
@@ -48,13 +47,14 @@ object CarmenQueueFallback {
 
         val enabled =
             runCatching {
-                context.dataStore.data.firstOrNull()[CarmenFallbackKey]
+                context.dataStore.data.first()[CarmenFallbackKey]
             }.getOrNull() ?: true
         if (!enabled) return null
 
+        val client = api ?: return null
         val songs =
             CarmenFallbackPolicy(context).tryFallback(failure) {
-                (api ?: return null)
+                client
                     .watch(
                         videoId = endpoint.videoId,
                         playlistId = endpoint.playlistId,
