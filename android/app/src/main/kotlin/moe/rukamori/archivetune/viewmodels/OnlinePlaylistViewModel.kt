@@ -29,7 +29,6 @@ import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.sync.withPermit
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.db.MusicDatabase
 import moe.rukamori.archivetune.extensions.filterBlockedArtists
@@ -51,7 +50,6 @@ class OnlinePlaylistViewModel
         savedStateHandle: SavedStateHandle,
         private val database: MusicDatabase,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         private val playlistId = savedStateHandle.get<String>("playlistId")!!
 
@@ -139,43 +137,44 @@ class OnlinePlaylistViewModel
             viewModelScope.launch(Dispatchers.IO) {
                 _error.value = null
 
-                YouTube
-                    .playlist(playlistId)
-                    .onSuccess { playlistPage ->
-                        val visibleSongs =
-                            playlistPage.songs
-                                .filterVideo(context.dataStore.get(HideVideoKey, false))
-                                .filterBlockedArtists(database.getBlockedArtistIds().toSet())
-                                .distinctByPlaylistEntry()
-                        _playlist.value = playlistPage.playlist
-                        _playlistSongs.value = visibleSongs
-                        continuation = playlistPage.songsContinuation ?: playlistPage.continuation
-                        prefetchViewCounts(visibleSongs.map { song -> song.id })
-                    }.onFailure { throwable ->
-                        reportException(throwable)
-                        // Carmen fallback: the online playlist through the Carmen server.
-                        val fallback =
-                            carmenFallbackPolicy.tryFallback(throwable) {
-                                if (throwable is CancellationException) throw throwable
-                                carmenApi
-                                    .playlist(playlistId)
-                                    .getOrNull()
-                                    ?.takeIf { it.songs.isNotEmpty() }
-                            }
-                        if (fallback != null) {
+                // Carmen API is the primary playlist source; the free YouTube
+                // endpoint is a silent secondary when the server can't answer.
+                val carmenPlaylist =
+                    runCatching {
+                        carmenApi
+                            .playlist(playlistId)
+                            .getOrNull()
+                            ?.takeIf { it.songs.isNotEmpty() }
+                    }.getOrNull()
+
+                if (carmenPlaylist != null) {
+                    val visibleSongs =
+                        carmenPlaylist.songs
+                            .filterVideo(context.dataStore.get(HideVideoKey, false))
+                            .filterBlockedArtists(database.getBlockedArtistIds().toSet())
+                            .distinctByPlaylistEntry()
+                    _playlist.value = carmenPlaylist.playlist
+                    _playlistSongs.value = visibleSongs
+                    continuation = null
+                    prefetchViewCounts(visibleSongs.map { song -> song.id })
+                } else {
+                    YouTube
+                        .playlist(playlistId)
+                        .onSuccess { playlistPage ->
                             val visibleSongs =
-                                fallback.songs
+                                playlistPage.songs
                                     .filterVideo(context.dataStore.get(HideVideoKey, false))
                                     .filterBlockedArtists(database.getBlockedArtistIds().toSet())
                                     .distinctByPlaylistEntry()
-                            _playlist.value = fallback.playlist
+                            _playlist.value = playlistPage.playlist
                             _playlistSongs.value = visibleSongs
-                            continuation = null
+                            continuation = playlistPage.songsContinuation ?: playlistPage.continuation
                             prefetchViewCounts(visibleSongs.map { song -> song.id })
-                        } else {
+                        }.onFailure { throwable ->
+                            reportException(throwable)
                             _error.value = throwable.message ?: "Failed to load playlist"
                         }
-                    }
+                }
 
                 if (initial) {
                     _isLoading.value = false

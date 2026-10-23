@@ -30,6 +30,7 @@ import moe.rukamori.archivetune.aicontentfilter.FilterAiContentUseCase
 import moe.rukamori.archivetune.aicontentfilter.LoadAiContentFilterPolicyUseCase
 import moe.rukamori.archivetune.aicontentfilter.ObserveAiContentFilterUseCase
 import moe.rukamori.archivetune.auth.SwitchSavedYouTubeAccountUseCase
+import moe.rukamori.archivetune.carmen.CarmenApi
 import moe.rukamori.archivetune.carmen.CarmenSuggestions
 import moe.rukamori.archivetune.constants.AccountChannelHandleKey
 import moe.rukamori.archivetune.constants.AccountEmailKey
@@ -218,6 +219,7 @@ class HomeViewModel
         private val loadPersonalizedQuickPicksUseCase: LoadPersonalizedQuickPicksUseCase,
         private val prepareCommunityHomePageUseCase: PrepareCommunityHomePageUseCase,
         private val loadCommunityPlaylistPreviewsUseCase: LoadCommunityPlaylistPreviewsUseCase,
+        private val carmenApi: CarmenApi,
     ) : ViewModel() {
         private val isRefreshing = MutableStateFlow(false)
         private val isLoading = MutableStateFlow(false)
@@ -720,8 +722,10 @@ class HomeViewModel
                     }
 
                     launch {
+                        // Carmen API is the primary home source; the free
+                        // YouTube endpoints are a silent secondary.
                         val page =
-                            YouTube.home().getOrElse { throwable ->
+                            carmenApi.home().getOrNull() ?: YouTube.home().getOrElse { throwable ->
                                 reportException(throwable)
                                 loadError.value = R.string.error_unknown
                                 return@launch

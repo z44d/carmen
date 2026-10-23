@@ -22,7 +22,6 @@ import kotlinx.coroutines.launch
 import moe.rukamori.archivetune.aicontentfilter.FilterAiContentUseCase
 import moe.rukamori.archivetune.aicontentfilter.LoadAiContentFilterPolicyUseCase
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.HideExplicitKey
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.innertube.YouTube
@@ -45,7 +44,6 @@ import moe.rukamori.archivetune.ui.screens.search.decodeOnlineSearchQuery
 import moe.rukamori.archivetune.utils.dataStore
 import moe.rukamori.archivetune.utils.get
 import moe.rukamori.archivetune.utils.reportException
-import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 
 enum class OnlineSearchSort {
@@ -74,13 +72,13 @@ class OnlineSearchViewModel
         private val loadAiContentFilterPolicy: LoadAiContentFilterPolicyUseCase,
         private val filterAiContent: FilterAiContentUseCase,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         val query =
             decodeOnlineSearchQuery(
                 savedStateHandle.get<String>(OnlineSearchResultArgument).orEmpty(),
             )
-        val filter = MutableStateFlow<YouTube.SearchFilter?>(null)
+        // Songs by default; the other types are reachable from the filter menu.
+        val filter = MutableStateFlow<YouTube.SearchFilter?>(YouTube.SearchFilter.FILTER_SONG)
         var summaryPage by mutableStateOf<SearchSummaryPage?>(null)
         val viewStateMap = mutableStateMapOf<String, ItemsPage?>()
 
@@ -151,48 +149,40 @@ class OnlineSearchViewModel
             if (viewStateMap.containsKey(filterKey) || !loadingFilters.add(filterKey)) return
 
             try {
-                YouTube
-                    .search(query, filter)
-                    .onSuccess { result ->
-                        val aiContentFilterPolicy = loadAiContentFilterPolicy()
-                        viewStateMap[filterKey] =
-                            ItemsPage(
-                                filterAiContent(
-                                    result.items
-                                        .distinctBy { it.id }
-                                        .filterExplicit(
-                                            context.dataStore.get(
-                                                HideExplicitKey,
-                                                false,
-                                            ),
-                                        ).filterVideo(context.dataStore.get(HideVideoKey, false)),
-                                    aiContentFilterPolicy,
-                                ),
-                                result.continuation,
-                            )
-                    }.onFailure { throwable ->
-                        reportException(throwable)
-                        // Carmen fallback: re-run the same query through the Carmen server.
-                        val items =
-                            carmenFallbackPolicy.tryFallback(throwable) {
-                                if (throwable is CancellationException) throw throwable
-                                carmenApi
-                                    .search(query, filter.toCarmenFilter())
-                                    .getOrNull()
-                            } ?: return@onFailure
-                        if (items.isNotEmpty()) {
-                            viewStateMap[filterKey] =
-                                ItemsPage(
-                                    filterAiContent(
-                                        items
-                                            .distinctBy { it.id }
-                                            .filterExplicit(context.dataStore.get(HideExplicitKey, false))
-                                            .filterVideo(context.dataStore.get(HideVideoKey, false)),
-                                        loadAiContentFilterPolicy(),
-                                    ),
-                                    null,
-                                )
-                        }
+                val aiContentFilterPolicy = loadAiContentFilterPolicy()
+                val hideExplicit = context.dataStore.get(HideExplicitKey, false)
+                val hideVideo = context.dataStore.get(HideVideoKey, false)
+
+                suspend fun List<YTItem>.filtered() =
+                    filterAiContent(
+                        distinctBy { it.id }.filterExplicit(hideExplicit).filterVideo(hideVideo),
+                        aiContentFilterPolicy,
+                    )
+
+                // Carmen API is the primary search source; the free YouTube
+                // endpoints are a silent secondary when the server can't answer.
+                val carmenFilter = filter.toCarmenFilter()
+                val carmenItems =
+                    if (carmenFilter == null) {
+                        emptyList()
+                    } else {
+                        runCatching {
+                            carmenApi.search(query, carmenFilter).getOrNull().orEmpty().filtered()
+                        }.getOrDefault(emptyList())
+                    }
+
+                viewStateMap[filterKey] =
+                    if (carmenItems.isNotEmpty()) {
+                        ItemsPage(carmenItems, null)
+                    } else {
+                        YouTube
+                            .search(query, filter)
+                            .getOrElse { throwable ->
+                                reportException(throwable)
+                                ItemsPage(emptyList(), null)
+                            }.let { result ->
+                                ItemsPage(result.items.filtered(), result.continuation)
+                            }
                     }
             } finally {
                 loadingFilters.remove(filterKey)

@@ -4024,20 +4024,20 @@ class MusicService :
         CarmenSuggestions.remove(this, listOf(mediaId))
     }
 
-    /** Related songs: YouTube Music first, Carmen server on failure. */
+    /** Related songs: Carmen server first; YouTube Music as a silent fallback. */
     private suspend fun fetchRelatedSongs(mediaId: String): List<SongItem> {
-        val ytSongs =
-            YouTube.next(WatchEndpoint(videoId = mediaId))
-                .getOrNull()
-                ?.relatedEndpoint
-                ?.let { endpoint -> YouTube.related(endpoint).getOrNull()?.songs }
-                .orEmpty()
-        if (ytSongs.isNotEmpty()) return ytSongs
-        return carmenFallbackPolicy.tryFallback(
-            IllegalStateException("YouTube related songs unavailable"),
-        ) {
-            carmenApi.related(mediaId).getOrNull()
-        }.orEmpty()
+        val carmenSongs =
+            carmenFallbackPolicy.tryFallback(
+                IllegalStateException("Carmen related songs unavailable"),
+            ) {
+                carmenApi.related(mediaId).getOrNull()
+            }.orEmpty()
+        if (carmenSongs.isNotEmpty()) return carmenSongs
+        return YouTube.next(WatchEndpoint(videoId = mediaId))
+            .getOrNull()
+            ?.relatedEndpoint
+            ?.let { endpoint -> YouTube.related(endpoint).getOrNull()?.songs }
+            .orEmpty()
     }
 
     fun playQueue(

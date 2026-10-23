@@ -85,6 +85,7 @@ import moe.rukamori.archivetune.extensions.toMediaItem
 import moe.rukamori.archivetune.playback.queues.ListQueue
 import moe.rukamori.archivetune.playback.queues.YouTubeQueue
 import moe.rukamori.archivetune.ui.component.ChipsRow
+
 import moe.rukamori.archivetune.ui.component.EmptyPlaceholder
 import moe.rukamori.archivetune.ui.component.LocalMenuState
 import moe.rukamori.archivetune.ui.component.YouTubeListItem
@@ -299,39 +300,75 @@ fun OnlineSearchResult(
                     .windowInsetsPadding(WindowInsets.systemBars.only(WindowInsetsSides.Top).add(WindowInsets(top = AppBarHeight)))
                     .fillMaxWidth(),
         ) {
-            ChipsRow(
-                chips =
-                    listOf(
-                        null to stringResource(R.string.filter_all),
-                        FILTER_SONG to stringResource(R.string.filter_songs),
-                        FILTER_VIDEO to stringResource(R.string.filter_videos),
-                        FILTER_ALBUM to stringResource(R.string.filter_albums),
-                        FILTER_ARTIST to stringResource(R.string.filter_artists),
-                        FILTER_PODCAST to stringResource(R.string.podcast),
-                        FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists),
-                        FILTER_FEATURED_PLAYLIST to stringResource(R.string.filter_featured_playlists),
-                    ),
-                currentValue = searchFilter,
-                onValueUpdate = {
-                    if (viewModel.filter.value != it) {
-                        viewModel.filter.value = it
+            // Songs by default; the remaining types are tucked away in a menu.
+            var filterMenuOpen by remember { mutableStateOf(false) }
+            val filterOptions =
+                listOf(
+                    FILTER_SONG to stringResource(R.string.filter_songs),
+                    FILTER_VIDEO to stringResource(R.string.filter_videos),
+                    FILTER_ALBUM to stringResource(R.string.filter_albums),
+                    FILTER_ARTIST to stringResource(R.string.filter_artists),
+                    FILTER_COMMUNITY_PLAYLIST to stringResource(R.string.filter_community_playlists),
+                    FILTER_FEATURED_PLAYLIST to stringResource(R.string.filter_featured_playlists),
+                )
+            val currentFilterLabel =
+                filterOptions.firstOrNull { it.first == searchFilter }?.second ?: filterOptions.first().second
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier =
+                    Modifier
+                        .padding(horizontal = 12.dp, vertical = 8.dp)
+                        .fillMaxWidth(),
+            ) {
+                FilterChip(
+                    selected = false,
+                    onClick = { filterMenuOpen = true },
+                    label = { Text(currentFilterLabel) },
+                    leadingIcon = {
+                        Icon(
+                            painter = painterResource(R.drawable.music_note),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        Icon(
+                            painter = painterResource(R.drawable.expand_more),
+                            contentDescription = null,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    },
+                )
+                DropdownMenu(
+                    expanded = filterMenuOpen,
+                    onDismissRequest = { filterMenuOpen = false },
+                ) {
+                    filterOptions.forEach { (option, label) ->
+                        DropdownMenuItem(
+                            text = { Text(label) },
+                            leadingIcon = {
+                                if (option == searchFilter) {
+                                    Icon(
+                                        painter = painterResource(R.drawable.check),
+                                        contentDescription = null,
+                                        modifier = Modifier.size(16.dp),
+                                    )
+                                }
+                            },
+                            onClick = {
+                                filterMenuOpen = false
+                                if (viewModel.filter.value != option) {
+                                    viewModel.filter.value = option
+                                    coroutineScope.launch {
+                                        lazyListState.animateScrollToItem(0)
+                                    }
+                                }
+                            },
+                        )
                     }
-                    coroutineScope.launch {
-                        lazyListState.animateScrollToItem(0)
-                    }
-                },
-                icons =
-                    mapOf(
-                        null to R.drawable.search,
-                        FILTER_SONG to R.drawable.music_note,
-                        FILTER_VIDEO to R.drawable.slow_motion_video,
-                        FILTER_ALBUM to R.drawable.album,
-                        FILTER_ARTIST to R.drawable.person,
-                        FILTER_PODCAST to R.drawable.mic,
-                        FILTER_COMMUNITY_PLAYLIST to R.drawable.queue_music,
-                        FILTER_FEATURED_PLAYLIST to R.drawable.playlist_play,
-                    ),
-            )
+                }
+            }
         }
 
         LazyColumn(

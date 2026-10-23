@@ -40,7 +40,6 @@ import moe.rukamori.archivetune.artist.ArtistBlockRequest
 import moe.rukamori.archivetune.artist.ObserveArtistBlockedUseCase
 import moe.rukamori.archivetune.artist.SetArtistBlockedUseCase
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.HideExplicitKey
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.db.MusicDatabase
@@ -109,7 +108,6 @@ class ArtistViewModel
         private val setArtistBlocked: SetArtistBlockedUseCase,
         savedStateHandle: SavedStateHandle,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         val artistId = savedStateHandle.get<String>("artistId")!!
         private val _artistPage = MutableStateFlow<ArtistPage?>(null)
@@ -186,12 +184,8 @@ class ArtistViewModel
                     val hideVideo = context.dataStore.get(HideVideoKey, false)
                     val blockedArtistIds = database.getBlockedArtistIds().toSet()
                     val page =
-                        runCatching { YouTube.artist(storedArtist?.id ?: artistId).getOrThrow() }
-                            .recoverCatching { throwable ->
-                                carmenFallbackPolicy.tryFallback(throwable) {
-                                    carmenApi.artist(storedArtist?.id ?: artistId).getOrNull()
-                                } ?: throw throwable
-                            }.getOrThrow()
+                        carmenApi.artist(storedArtist?.id ?: artistId).getOrNull()
+                            ?: YouTube.artist(storedArtist?.id ?: artistId).getOrThrow()
                     val filteredSections = page.sections.map { section ->
                         section.copy(
                             items = section.items

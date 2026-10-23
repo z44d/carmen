@@ -369,13 +369,31 @@ jobs:
           printf '%s\n' "$RELEASE_BODY" > "$RUNNER_TEMP/release-body.md"
           cat .github/RELEASE_NOTES.md >> "$RUNNER_TEMP/release-body.md"
 
+      - name: Stage APK/AAB with Carmen release names
+        # Downloaded artifacts keep the gradle default names
+        # (app-gms-mobile-universal-release.*); rename them to
+        # Carmen_v<version>-universal.{apk,aab} for the release.
+        if: github.ref_type == 'tag'
+        run: |
+          set -euo pipefail
+          out="$RUNNER_TEMP/carmen-assets"
+          mkdir -p "$out"
+          version="${GITHUB_REF_NAME#v}"
+          apk="$(find android/app/build/outputs/apk -name '*universal-release.apk' -print -quit)"
+          aab="$(find android/app/build/outputs/bundle -name '*universal-release.aab' -print -quit)"
+          [ -n "$apk" ] || { echo "release APK not found"; exit 1; }
+          [ -n "$aab" ] || { echo "release AAB not found"; exit 1; }
+          cp "$apk" "$out/Carmen_v${version}-universal.apk"
+          cp "$aab" "$out/Carmen_v${version}-universal.aab"
+          echo "Staged:"; ls -la "$out"
+
       - name: Attach APK/AAB to the GitHub release
         if: github.ref_type == 'tag'
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            android/app/build/outputs/apk/**/*.apk
-            android/app/build/outputs/bundle/**/*.aab
+            ${{ runner.temp }}/carmen-assets/Carmen_v*-universal.apk
+            ${{ runner.temp }}/carmen-assets/Carmen_v*-universal.aab
           fail_on_unmatched_files: true
           body_path: ${{ runner.temp }}/release-body.md
 

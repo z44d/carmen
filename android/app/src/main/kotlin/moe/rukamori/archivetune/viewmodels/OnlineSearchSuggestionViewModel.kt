@@ -21,7 +21,6 @@ import kotlinx.coroutines.launch
 import moe.rukamori.archivetune.aicontentfilter.FilterAiContentUseCase
 import moe.rukamori.archivetune.aicontentfilter.LoadAiContentFilterPolicyUseCase
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.HideExplicitKey
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.db.MusicDatabase
@@ -44,7 +43,6 @@ class OnlineSearchSuggestionViewModel
         private val loadAiContentFilterPolicy: LoadAiContentFilterPolicyUseCase,
         private val filterAiContent: FilterAiContentUseCase,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         private val query = MutableStateFlow("")
         private val _viewState = MutableStateFlow(SearchSuggestionViewState())
@@ -61,25 +59,23 @@ class OnlineSearchSuggestionViewModel
                                 )
                             }
                         } else {
-                            val result = YouTube.searchSuggestions(query).getOrNull()
                             val aiContentFilterPolicy = loadAiContentFilterPolicy()
 
-                            // Carmen fallback: server suggestions + matching
-                            // song hits when YouTube returns nothing.
-                            val fallbackPair =
-                                if (result == null || (result.queries.isEmpty() && result.recommendedItems.isEmpty())) {
-                                    carmenFallbackPolicy.tryFallback(
-                                        IllegalStateException("YouTube search suggestions unavailable"),
-                                    ) {
-                                        carmenApi.suggestions(query).getOrNull().orEmpty() to
-                                            carmenApi.search(query, "songs", limit = 12).getOrNull().orEmpty()
-                                    }
+                            // Carmen API first: server suggestions + matching
+                            // song hits; the free YouTube endpoint is a silent
+                            // secondary when the server can't answer.
+                            val carmenSuggestions = carmenApi.suggestions(query).getOrNull().orEmpty()
+                            val carmenItems = carmenApi.search(query, "songs", limit = 12).getOrNull().orEmpty()
+
+                            val ytResult =
+                                if (carmenSuggestions.isEmpty() && carmenItems.isEmpty()) {
+                                    YouTube.searchSuggestions(query).getOrNull()
                                 } else {
                                     null
                                 }
 
-                            val suggestedWords: List<String> = (result?.queries ?: fallbackPair?.first).orEmpty()
-                            val recommendedItems: List<YTItem> = (result?.recommendedItems ?: fallbackPair?.second).orEmpty()
+                            val suggestedWords: List<String> = carmenSuggestions.ifEmpty { ytResult?.queries.orEmpty() }
+                            val recommendedItems: List<YTItem> = carmenItems.ifEmpty { ytResult?.recommendedItems.orEmpty() }
 
                             database
                                 .searchHistory(query)

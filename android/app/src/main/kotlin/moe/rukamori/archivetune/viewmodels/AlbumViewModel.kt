@@ -26,7 +26,6 @@ import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.HideVideoKey
 import moe.rukamori.archivetune.db.MusicDatabase
 import moe.rukamori.archivetune.extensions.filterBlockedArtists
@@ -67,7 +66,6 @@ class AlbumViewModel
         private val database: MusicDatabase,
         savedStateHandle: SavedStateHandle,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
     ) : ViewModel() {
         val albumId = savedStateHandle.get<String>("albumId")!!
         val playlistId = MutableStateFlow("")
@@ -122,12 +120,8 @@ class AlbumViewModel
                         return@launch
                     }
                     val page =
-                        runCatching { YouTube.album(album?.album?.id ?: albumId).getOrThrow() }
-                            .recoverCatching { throwable ->
-                                carmenFallbackPolicy.tryFallback(throwable) {
-                                    carmenApi.album(album?.album?.id ?: albumId).getOrNull()
-                                } ?: throw throwable
-                            }.getOrThrow()
+                        carmenApi.album(album?.album?.id ?: albumId).getOrNull()
+                            ?: YouTube.album(album?.album?.id ?: albumId).getOrThrow()
                     playlistId.value = page.album.playlistId
                     val blockedArtistIds = database.getBlockedArtistIds().toSet()
                     otherVersions.value = page.otherVersions.filter { version ->

@@ -34,6 +34,7 @@ import moe.rukamori.archivetune.innertube.pages.AlbumPage
 import moe.rukamori.archivetune.innertube.pages.ArtistPage
 import moe.rukamori.archivetune.innertube.pages.ArtistSection
 import moe.rukamori.archivetune.innertube.pages.ArtistSectionLayout
+import moe.rukamori.archivetune.innertube.pages.HomePage
 import moe.rukamori.archivetune.innertube.pages.PlaylistPage
 import moe.rukamori.archivetune.utils.dataStore
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
@@ -53,8 +54,9 @@ import javax.inject.Singleton
  * `thumbnails` / `thumbnail` / `artwork`. Parsing is therefore defensive and
  * manual (mirroring the iOS `Models.swift`), and every field is optional.
  *
- * Used as the fallback data source when the free YouTube Music APIs fail, so
- * the app keeps working in no-login mode.
+ * Used as the **primary** data source (home, search, related, detail pages and
+ * streams); the free YouTube Music APIs serve as a silent secondary so the
+ * app keeps working if the server is unreachable.
  */
 @Singleton
 class CarmenApi
@@ -353,6 +355,35 @@ class CarmenApi
                     put("limit", limit.toString())
                 },
             ).map(::parseYTItemArray)
+
+        /**
+         * `/browsing/home` → [HomePage]. The endpoint answers a bare array of
+         * named shelves (each `{title, contents|items: [card…]}`); cards are
+         * heterogeneous media cards already understood by [elementToYTItem].
+         */
+        suspend fun home(): Result<HomePage> =
+            get("/browsing/home").map { root ->
+                val array =
+                    ((root as? JsonObject)?.get("sections") as? JsonArray)
+                        ?: (root as? JsonArray)
+                        ?: JsonArray(emptyList())
+                val sections =
+                    array.mapNotNull { element ->
+                        val obj = element as? JsonObject ?: return@mapNotNull null
+                        val items =
+                            (((obj["contents"] ?: obj["items"]) as? JsonArray).orEmpty())
+                                .mapNotNull(::elementToYTItem)
+                        if (items.isEmpty()) return@mapNotNull null
+                        HomePage.Section(
+                            title = obj["title"].maybeStr().orEmpty().ifBlank { "Suggested" },
+                            label = null,
+                            thumbnail = null,
+                            endpoint = null,
+                            items = items,
+                        )
+                    }
+                HomePage(chips = null, sections = sections)
+            }
 
         suspend fun suggestions(query: String): Result<List<String>> =
             get("/search/suggestions", mapOf("query" to query)).map { root ->

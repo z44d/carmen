@@ -1,27 +1,26 @@
 <?xml version="1.0" encoding="utf-8"?>
+<!-- Carmen — white quaver, © z44d (github.com/z44d) -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
     android:width="185dp"
     android:height="185dp"
     android:viewportWidth="185"
     android:viewportHeight="185">
 
+    <!-- stem -->
     <path
-        android:fillColor="#fefffe"
-        android:fillAlpha="0.92"
-        android:strokeAlpha="0.92"
-        android:strokeWidth="1"
-        android:pathData="M 136.5,42.5 C 139.572,42.1826 142.572,42.5159 145.5,43.5C 147.696,46.5596
-149.363,49.893 150.5,53.5C 141.188,70.7896 131.355,87.7896 121,104.5C
-115.248,101.04 109.415,97.7069 103.5,94.5C 108.706,84.5868 114.04,74.7535
-119.5,65C 93.5133,65.9659 67.5133,67.1326 41.5,68.5C 41.5,61.1667 41.5,53.8333
-41.5,46.5C 73.3416,45.5964 105.008,44.2631 136.5,42.5 Z" />
+        android:fillColor="#ffffff"
+        android:pathData="M97.1,53.7 h9 v75.9 h-9 z" />
+    <!-- flag -->
     <path
-        android:fillColor="#fefffe"
-        android:fillAlpha="0.914"
-        android:strokeAlpha="0.914"
-        android:strokeWidth="1"
-        android:pathData="M 77.5,75.5 C 84.8406,76.1159 92.174,76.7826 99.5,77.5C 97.8365,97.8139
-94.3365,117.814 89,137.5C 87.8225,142.225 85.9892,146.559 83.5,150.5C
-76.3087,148.954 69.3087,146.954 62.5,144.5C 69.9692,122.011 74.9692,99.011
-77.5,75.5 Z" />
+        android:fillColor="#ffffff"
+        android:pathData="M106.1,54.2 C117.3,58.6 126.4,74.9 126.4,101 L118.2,101 C118.2,77.6 111.9,63.6 106.1,60 Z" />
+    <!-- head -->
+    <group
+        android:rotation="-20"
+        android:pivotX="71.9"
+        android:pivotY="128.5">
+        <path
+            android:fillColor="#ffffff"
+            android:pathData="M45.7,128.5 a26.2,20.2 0 1 0 52.4,0 a26.2,20.2 0 1 0 -52.4,0 z" />
+    </group>
 </vector>

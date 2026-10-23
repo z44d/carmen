@@ -284,7 +284,10 @@ android {
     }
 
     androidResources {
-        generateLocaleConfig = true
+        // English-only: the app always resolves to the default (English)
+        // strings regardless of the system language.
+        generateLocaleConfig = false
+        localeFilters += listOf("en")
     }
 
     packaging {

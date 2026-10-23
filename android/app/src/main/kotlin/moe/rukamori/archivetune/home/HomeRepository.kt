@@ -17,7 +17,6 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import moe.rukamori.archivetune.constants.DisableBlurKey
 import moe.rukamori.archivetune.carmen.CarmenApi
-import moe.rukamori.archivetune.carmen.CarmenFallbackPolicy
 import moe.rukamori.archivetune.constants.QuickPicks
 import moe.rukamori.archivetune.constants.QuickPicksKey
 import moe.rukamori.archivetune.constants.QuickPicksDisplayMode
@@ -41,7 +40,6 @@ class HomeRepository
     constructor(
         @ApplicationContext context: Context,
         private val carmenApi: CarmenApi,
-        private val carmenFallbackPolicy: CarmenFallbackPolicy,
         private val database: MusicDatabase,
     ) {
         val showCategoryChips: Flow<Boolean> =
@@ -93,21 +91,16 @@ class HomeRepository
         }
 
         suspend fun loadRelatedSongs(seed: QuickPickSeed): Result<List<SongItem>> {
+            // Carmen server first; the free YouTube endpoints are a silent secondary.
+            val carmenSongs = carmenApi.related(seed.id).getOrNull()?.take(10).orEmpty()
+            if (carmenSongs.isNotEmpty()) {
+                val validated = carmenSongs.validRecommendationsFor(seed.id)
+                if (validated.isNotEmpty()) return Result.success(validated)
+            }
+
             val nextResult = YouTube.next(WatchEndpoint(videoId = seed.id))
             nextResult.exceptionOrNull()?.let { throwable ->
                 if (throwable is CancellationException) throw throwable
-            }
-
-            // Carmen fallback: when Innertube can't give us a next page (bot
-            // detection, region blocks, no login), ask the Carmen server.
-            if (nextResult.isFailure) {
-                val fallback =
-                    carmenFallbackPolicy.tryFallback(
-                        nextResult.exceptionOrNull() ?: IllegalStateException("related failed"),
-                    ) {
-                        carmenApi.related(seed.id).getOrNull()?.take(10)
-                    }
-                if (!fallback.isNullOrEmpty()) return Result.success(fallback)
             }
 
             val nextPage = nextResult.getOrNull()
@@ -120,16 +113,6 @@ class HomeRepository
                 (relatedSongs + nextPage?.items.orEmpty())
                     .validRecommendationsFor(seed.id)
             if (radioSongs.isNotEmpty()) return Result.success(radioSongs)
-
-            // Weak YouTube relation (no related endpoint): try Carmen next.
-            val weakFallback =
-                carmenFallbackPolicy.tryFallback(IllegalStateException("no related songs from YouTube")) {
-                    carmenApi.related(seed.id).getOrNull()?.take(10)
-                }
-            if (!weakFallback.isNullOrEmpty()) {
-                val validated = weakFallback.validRecommendationsFor(seed.id)
-                if (validated.isNotEmpty()) return Result.success(validated)
-            }
 
             val searchedSongs =
                 YouTube

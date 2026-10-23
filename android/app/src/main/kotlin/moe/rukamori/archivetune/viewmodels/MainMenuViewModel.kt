@@ -40,7 +40,6 @@ sealed interface MenuProfileState {
 }
 
 enum class MainMenuDestination(val route: String) {
-    Profile("settings/account"),
     NewRelease("new_release"),
     News("news"),
     History("history"),

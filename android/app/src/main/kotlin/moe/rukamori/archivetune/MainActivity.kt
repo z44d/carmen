@@ -213,9 +213,9 @@ import moe.rukamori.archivetune.constants.DisableScreenshotKey
 import moe.rukamori.archivetune.constants.DynamicThemeKey
 import moe.rukamori.archivetune.constants.EnableHapticFeedbackKey
 import moe.rukamori.archivetune.constants.FontPreferenceKey
-import moe.rukamori.archivetune.constants.HasPressedStarKey
+
 import moe.rukamori.archivetune.constants.AodModeEnabledKey
-import moe.rukamori.archivetune.constants.LaunchCountKey
+
 import moe.rukamori.archivetune.constants.MiniPlayerBottomSpacing
 import moe.rukamori.archivetune.constants.MiniPlayerHeight
 import moe.rukamori.archivetune.constants.MiniPlayerLastAnchorKey
@@ -233,7 +233,7 @@ import moe.rukamori.archivetune.constants.PlayerBackgroundStyleKey
 import moe.rukamori.archivetune.constants.PlayerDesignStyle
 import moe.rukamori.archivetune.constants.PlayerDesignStyleKey
 import moe.rukamori.archivetune.constants.PureBlackKey
-import moe.rukamori.archivetune.constants.RemindAfterKey
+
 import moe.rukamori.archivetune.constants.SYSTEM_DEFAULT
 import moe.rukamori.archivetune.constants.SearchSource
 import moe.rukamori.archivetune.constants.SearchSourceKey
@@ -281,7 +281,7 @@ import moe.rukamori.archivetune.ui.component.LocalBottomSheetPageState
 import moe.rukamori.archivetune.ui.component.LocalMenuState
 import moe.rukamori.archivetune.ui.component.MarkdownText
 import moe.rukamori.archivetune.ui.component.NetworkStatusBanner
-import moe.rukamori.archivetune.ui.component.StarDialog
+
 import moe.rukamori.archivetune.ui.component.TopAppBarOverflowMenu
 import moe.rukamori.archivetune.ui.component.TopSearch
 import moe.rukamori.archivetune.ui.component.TvNavigationRail
@@ -1006,8 +1006,6 @@ class MainActivity : ComponentActivity() {
                     val newsViewModel: NewsViewModel = hiltViewModel()
                     val mainMenuViewModel: MainMenuViewModel = hiltViewModel()
                     val topAppBarOverflowExpanded by mainMenuViewModel.expanded.collectAsStateWithLifecycle()
-                    val menuProfileState by mainMenuViewModel.profileState.collectAsStateWithLifecycle()
-                    val menuAccountImageUrl by homeViewModel.accountImageUrl.collectAsStateWithLifecycle()
                     val menuHazeState = rememberHazeState()
                     val floatingBarsHazeState = rememberHazeState()
                     val navigationBarBackgroundStyle by rememberEnumPreference(
@@ -1613,76 +1611,6 @@ class MainActivity : ComponentActivity() {
                         }
                     }
 
-                    var showStarDialog by remember { mutableStateOf(false) }
-
-                    LaunchedEffect(Unit) {
-                        kotlinx.coroutines.delay(3000)
-
-                        withContext(Dispatchers.IO) {
-                            val current = dataStore[LaunchCountKey] ?: 0
-                            val newCount = current + 1
-                            dataStore.edit { prefs ->
-                                prefs[LaunchCountKey] = newCount
-                            }
-                        }
-
-                        val shouldShow =
-                            withContext(Dispatchers.IO) {
-                                val hasPressed = dataStore[HasPressedStarKey] ?: false
-                                val remindAfter = dataStore[RemindAfterKey] ?: 3
-                                !hasPressed && (dataStore[LaunchCountKey] ?: 0) >= remindAfter
-                            }
-
-                        if (shouldShow) {
-                            var waited = 0L
-                            val waitStep = 500L
-                            val maxWait = 30_000L
-                            while (bottomSheetPageState.isVisible && waited < maxWait) {
-                                delay(waitStep)
-                                waited += waitStep
-                            }
-                            showStarDialog = true
-                        }
-                    }
-
-                    if (showStarDialog) {
-                        StarDialog(
-                            onDismissRequest = { showStarDialog = false },
-                            onSupport = {
-                                coroutineScope.launch {
-                                    try {
-                                        withContext(Dispatchers.IO) {
-                                            dataStore.edit { prefs ->
-                                                prefs[HasPressedStarKey] = true
-                                                prefs[RemindAfterKey] = Int.MAX_VALUE
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        reportException(e)
-                                    } finally {
-                                        showStarDialog = false
-                                    }
-                                }
-                            },
-                            onLater = {
-                                coroutineScope.launch {
-                                    try {
-                                        val launch = withContext(Dispatchers.IO) { dataStore[LaunchCountKey] ?: 0 }
-                                        withContext(Dispatchers.IO) {
-                                            dataStore.edit { prefs ->
-                                                prefs[RemindAfterKey] = launch + 20
-                                            }
-                                        }
-                                    } catch (e: Exception) {
-                                        reportException(e)
-                                    } finally {
-                                        showStarDialog = false
-                                    }
-                                }
-                            },
-                        )
-                    }
-
                     val currentTitleRes =
                         remember(navBackStackEntry) {
                             when (navBackStackEntry?.destination?.route) {
@@ -2020,8 +1948,6 @@ class MainActivity : ComponentActivity() {
                                                                 }
                                                                 TopAppBarOverflowMenu(
                                                                     expanded = topAppBarOverflowExpanded,
-                                                                    profileState = menuProfileState,
-                                                                    accountImageUrl = menuAccountImageUrl,
                                                                     hazeState = menuHazeState,
                                                                     pureBlack = pureBlack,
                                                                     hasUnreadNews = hasUnreadNews,

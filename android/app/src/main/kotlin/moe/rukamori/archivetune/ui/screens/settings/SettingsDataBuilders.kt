@@ -28,15 +28,6 @@ fun buildSettingsGroups(
     hasUpdate: Boolean,
     context: Context,
 ): List<SettingsGroup> {
-    val account =
-        SettingsItem(
-            key = "account",
-            icon = painterResource(R.drawable.account),
-            title = stringResource(R.string.account),
-            subtitle = stringResource(R.string.settings_account_subtitle),
-            accentColor = MaterialTheme.colorScheme.primary,
-            onClick = { navController.navigate("settings/account") },
-        )
     val stats =
         SettingsItem(
             key = "stats",
@@ -247,7 +238,7 @@ fun buildSettingsGroups(
     return listOf(
         SettingsGroup(
             title = stringResource(R.string.settings),
-            items = listOf(account, stats),
+            items = listOf(stats),
         ),
         SettingsGroup(
             title = stringResource(R.string.settings_section_player_content),

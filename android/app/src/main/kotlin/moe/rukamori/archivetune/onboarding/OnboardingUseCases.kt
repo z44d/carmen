@@ -185,12 +185,6 @@ class BuildOnboardingUiStateUseCase
                         iconResId = R.drawable.security,
                     ),
                     OnboardingPageUiModel(
-                        id = OnboardingPageId.LOGIN,
-                        titleResId = R.string.onboarding_login_title,
-                        subtitleResId = R.string.onboarding_login_subtitle,
-                        iconResId = R.drawable.login,
-                    ),
-                    OnboardingPageUiModel(
                         id = OnboardingPageId.COMMUNITY,
                         titleResId = R.string.onboarding_community_title,
                         subtitleResId = R.string.onboarding_community_subtitle,
@@ -227,27 +221,6 @@ class BuildOnboardingUiStateUseCase
                         titleResId = R.string.support_development_star,
                         descriptionResId = R.string.onboarding_community_github_desc,
                         iconResId = R.drawable.github,
-                        url = "https://github.com/rukamori/Carmen",
-                    ),
-                    OnboardingCommunityActionUiModel(
-                        id = "discord",
-                        titleResId = R.string.onboarding_community_discord_title,
-                        descriptionResId = R.string.onboarding_community_telegram_desc,
-                        iconResId = R.drawable.discord,
-                        url = "https://discord.gg/XF2fpb9rTq",
-                    ),
-                    OnboardingCommunityActionUiModel(
-                        id = "telegram",
-                        titleResId = R.string.onboarding_community_telegram_title,
-                        descriptionResId = R.string.onboarding_community_telegram_desc,
-                        iconResId = R.drawable.telegram,
-                        url = "https://t.me/CarmenGC",
-                    ),
-                    OnboardingCommunityActionUiModel(
-                        id = "donate",
-                        titleResId = R.string.about_content_desc_donate,
-                        descriptionResId = R.string.onboarding_community_donate_desc,
-                        iconResId = R.drawable.coffee,
                         url = "https://github.com/z44d/carmen",
                     ),
                 )

@@ -32,14 +32,13 @@ object CarmenQueueFallback {
     }
 
     /**
-     * Queue-continuation fallback through `/watch`. Returns null when there is
-     * nothing to fall back to (not configured / disabled / empty result) — the
-     * original failure is rethrown by the caller then.
+     * Queue builder through `/watch`. Returns null when the server can't
+     * answer (not configured / disabled / empty result) — the caller then
+     * falls back to the free YouTube endpoints.
      */
     suspend fun next(
         endpoint: WatchEndpoint,
         continuation: String?,
-        failure: Throwable,
     ): NextResult? {
         if (continuation != null) return null // only the first page; a server queue ends the radio
         val context = appContext ?: return null
@@ -53,15 +52,13 @@ object CarmenQueueFallback {
 
         val client = api ?: return null
         val songs =
-            CarmenFallbackPolicy(context).tryFallback(failure) {
-                client
-                    .watch(
-                        videoId = endpoint.videoId,
-                        playlistId = endpoint.playlistId,
-                        radio = endpoint.videoId != null,
-                    ).getOrNull()
-            } ?: return null
-        if (songs.isEmpty()) return null
+            client
+                .watch(
+                    videoId = endpoint.videoId,
+                    playlistId = endpoint.playlistId,
+                    radio = endpoint.videoId != null,
+                ).getOrNull()
+        if (songs.isNullOrEmpty()) return null
 
         return NextResult(
             title = null,

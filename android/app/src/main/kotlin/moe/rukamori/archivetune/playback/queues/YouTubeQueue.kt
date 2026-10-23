@@ -27,16 +27,16 @@ class YouTubeQueue(
     override suspend fun getInitialStatus(): Queue.Status {
         val nextResult =
             withContext(IO) {
-                runCatching {
-                    YouTube
+                // Carmen server first (primary queue builder); the free
+                // YouTube endpoints are a silent fallback.
+                CarmenQueueFallback
+                    .next(endpoint, continuation)
+                    ?: YouTube
                         .next(
                             endpoint = endpoint,
                             continuation = continuation,
                             followAutomixPreview = followAutomixPreview,
                         ).getOrThrow()
-                }.recoverCatching { throwable ->
-                    CarmenQueueFallback.next(endpoint, continuation, throwable) ?: throw throwable
-                }.getOrThrow()
             }
         endpoint = nextResult.endpoint
         continuation = nextResult.continuation
@@ -54,19 +54,26 @@ class YouTubeQueue(
     override suspend fun nextPage(): List<MediaItem> {
         val nextResult =
             withContext(IO) {
-                runCatching {
+                if (continuation != null) {
+                    // Radio/queue continuation pages come from YouTube only;
+                    // the server queue ends with its first page.
                     YouTube
                         .next(
                             endpoint = endpoint,
                             continuation = continuation,
                             followAutomixPreview = followAutomixPreview,
                         ).getOrThrow()
-                }.recoverCatching { throwable ->
-                    if (continuation != null) throw throwable // radio ended; insert a fresh Carmen radio below
-                    CarmenQueueFallback.next(endpoint, continuation, throwable)
+                } else {
+                    CarmenQueueFallback
+                        .next(endpoint, null)
                         ?.also { endpoint = it.endpoint }
-                        ?: throw throwable
-                }.getOrThrow()
+                        ?: YouTube
+                            .next(
+                                endpoint = endpoint,
+                                continuation = null,
+                                followAutomixPreview = followAutomixPreview,
+                            ).getOrThrow()
+                }
             }
         endpoint = nextResult.endpoint
         continuation = nextResult.continuation
