@@ -177,12 +177,13 @@ class OnlineSearchViewModel
                     } else {
                         YouTube
                             .search(query, filter)
-                            .getOrElse { throwable ->
-                                reportException(throwable)
-                                ItemsPage(emptyList(), null)
-                            }.let { result ->
-                                ItemsPage(result.items.filtered(), result.continuation)
-                            }
+                            .fold(
+                                onSuccess = { result -> ItemsPage(result.items.filtered(), result.continuation) },
+                                onFailure = { throwable ->
+                                    reportException(throwable)
+                                    ItemsPage(emptyList(), null)
+                                },
+                            )
                     }
             } finally {
                 loadingFilters.remove(filterKey)
