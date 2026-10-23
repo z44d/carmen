@@ -1,6 +1,6 @@
 [package]
 name = "carmen"
-version = "1.0.0"
+version = "1.0.1"
 description = "Carmen — offline-first, cross-platform music player"
 authors = ["z44d"]
 edition = "2021"
