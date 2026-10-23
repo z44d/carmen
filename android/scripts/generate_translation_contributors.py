@@ -51,7 +51,16 @@ def main() -> None:
                 names.append(author)
 
     if not contributors:
-        raise RuntimeError("No translation credits found in Git history")
+        # Carmen squash-merged the ArchiveTune history when the Android app was
+        # vendored into this monorepo, so there are no Weblate commits to
+        # mine. Keep the translation_contributors.json that ships in the tree
+        # (it credits the original ArchiveTune translators) instead of failing
+        # the build — regeneration only matters in a history-carrying fork.
+        print(
+            "No translation credits found in Git history — "
+            f"keeping the committed {OUTPUT.relative_to(ROOT)}"
+        )
+        return
     data = [
         {"qualifier": language, "contributors": contributors[language]}
         for language in sorted(contributors)
