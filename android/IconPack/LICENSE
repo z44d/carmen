@@ -1,0 +1,205 @@
+ARCHIVETUNE ICON PACK LICENSE
+
+SPDX-License-Identifier: CC-BY-SA-4.0
+
+Copyright © the respective ArchiveTune Icon Pack contributors.
+
+1. LICENSED MATERIAL
+
+Except where a file, directory, or attribution record explicitly states
+otherwise, the original icons, illustrations, SVG files, documentation, and
+other creative material in this repository are licensed under the:
+
+Creative Commons Attribution-ShareAlike 4.0 International Public License
+(CC BY-SA 4.0)
+
+The complete and legally binding license terms are available at:
+
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+A human-readable summary is available at:
+
+https://creativecommons.org/licenses/by-sa/4.0/
+
+The Creative Commons legal code, rather than this explanatory notice, controls
+in the event of any inconsistency.
+
+2. COPYRIGHT OWNERSHIP
+
+Copyright in each contributed icon or other creative work remains with its
+respective author.
+
+The author of each work is identified, where available, in metadata.json,
+ATTRIBUTION.md, the file itself, its commit history, or the corresponding pull
+request.
+
+No transfer of copyright ownership occurs merely because a work is included in
+this repository.
+
+3. PERMISSIONS
+
+Subject to the terms of CC BY-SA 4.0, you may:
+
+* copy and redistribute the licensed material in any medium or format;
+* remix, transform, and build upon the licensed material;
+* use the licensed material for personal or commercial purposes; and
+* combine adapted versions of the licensed material with works distributed
+  under a BY-SA Compatible License where the compatibility rules permit it.
+
+These permissions are irrevocable provided that you comply with the applicable
+license conditions.
+
+4. ATTRIBUTION
+
+When sharing an icon or other licensed material, including a modified version,
+you must provide appropriate attribution.
+
+Where reasonably practicable, attribution should include:
+
+* the title or name of the icon;
+* the name or username of its author;
+* a reference or link to the original material;
+* a reference to the CC BY-SA 4.0 license; and
+* an indication of whether the material was modified.
+
+A suitable attribution format is:
+
+```
+"[ICON NAME]" by [AUTHOR], from ArchiveTune Icon Pack,
+licensed under CC BY-SA 4.0. Changes: [DESCRIPTION OR "none"].
+```
+
+Attribution may be provided in application credits, accompanying documentation,
+an attribution file, an about page, image metadata, or another reasonable
+location appropriate to the medium.
+
+Attribution must not imply that an author, contributor, ArchiveTune, or another
+rights holder endorses you or your use of the material.
+
+5. SHAREALIKE
+
+If you remix, transform, or build upon licensed material and distribute the
+result, you must make your contributions to the adapted material available
+under:
+
+* CC BY-SA 4.0;
+* a later version of CC BY-SA where permitted by the license; or
+* a license officially designated by Creative Commons as a BY-SA Compatible
+  License for the applicable use.
+
+You may not impose additional legal terms or effective technological measures
+that prevent recipients from exercising rights granted by the applicable
+license.
+
+6. GPLv3 COMPATIBILITY
+
+Creative Commons has designated GNU General Public License version 3 as a
+one-way BY-SA Compatible License for applicable adapted material.
+
+Where the Creative Commons compatibility rules apply, adapted material based
+on CC BY-SA 4.0 material may be distributed under GNU GPL version 3.
+
+This compatibility is one-way. Material originally licensed under GNU GPL
+version 3 does not automatically become available under CC BY-SA 4.0.
+
+Compatibility does not remove attribution requirements, notices, third-party
+rights, or other obligations that continue to apply under CC BY-SA 4.0 and the
+Creative Commons compatibility rules.
+
+7. MATERIAL NOT COVERED BY THIS LICENSE
+
+This license applies only to copyright and similar rights that a contributor
+or other licensor has authority to grant.
+
+The following are not licensed under this notice unless explicitly stated
+otherwise:
+
+* files marked with a different license;
+* works for which the copyright holder has not agreed to CC BY-SA 4.0;
+* third-party artwork included without relicensing authority;
+* trademarks, service marks, trade names, and logos;
+* names, likenesses, privacy rights, and publicity rights;
+* patents or patent claims;
+* characters, branding, designs, or other intellectual property belonging to
+  third parties; and
+* material used under fair use, fair dealing, quotation rights, or another
+  copyright exception or limitation.
+
+References to third-party games, applications, characters, franchises,
+companies, or products do not imply sponsorship, endorsement, affiliation, or
+authorization by their respective owners.
+
+You are responsible for determining whether your intended use requires
+additional permission from a third party.
+
+8. CONTRIBUTOR AUTHORIZATION
+
+This license applies to a contribution only when its contributor has agreed to
+license that contribution under CC BY-SA 4.0.
+
+By intentionally submitting a new contribution for inclusion in this
+repository after this licensing notice has been adopted, the contributor
+represents that:
+
+* the contribution is their original work, or they have sufficient authority
+  to submit and license it;
+* the contribution does not knowingly violate another party's copyright,
+  trademark, privacy, publicity, or other rights;
+* any third-party material is clearly identified together with its source and
+  license; and
+* they license their contribution under CC BY-SA 4.0.
+
+Contributions made before adoption of this notice are covered only when the
+relevant copyright holder has expressly agreed to CC BY-SA 4.0. A repository
+maintainer cannot unilaterally relicense another contributor's work.
+
+9. EXCEPTIONS
+
+A copyright holder may apply a different license to material they own by
+placing a clear license notice in or next to that material.
+
+An exception applies only to the material identified by that notice. It does
+not alter the license of other repository contents.
+
+Any file whose license status is unclear must not be assumed to be available
+under CC BY-SA 4.0.
+
+10. NO WARRANTY
+
+To the extent permitted by applicable law, the licensed material is provided
+as-is and as-available, without warranties of any kind.
+
+The licensors make no representations or warranties regarding title,
+non-infringement, accuracy, merchantability, fitness for a particular purpose,
+absence of defects, or suitability for any particular use.
+
+To the extent permitted by applicable law, the licensors will not be liable
+under any legal theory for losses, costs, expenses, or damages arising from
+this license or the use of the licensed material.
+
+The complete warranty disclaimer and limitation of liability in the
+CC BY-SA 4.0 legal code remain applicable.
+
+11. INDIVIDUAL FILE IDENTIFICATION
+
+Where practical, licensed files may contain the following identifier:
+
+```
+SPDX-License-Identifier: CC-BY-SA-4.0
+```
+
+For formats that do not support embedded comments, licensing and attribution
+information may be recorded in metadata.json, ATTRIBUTION.md, or an adjacent
+sidecar file.
+
+12. LICENSE VERSION AND CONTROLLING TERMS
+
+This repository uses Creative Commons Attribution-ShareAlike 4.0 International.
+
+The official CC BY-SA 4.0 legal code is incorporated into this notice by
+reference and provides the controlling legal terms:
+
+https://creativecommons.org/licenses/by-sa/4.0/legalcode
+
+Creative Commons is not a party to this license and does not endorse this
+repository or its contents.

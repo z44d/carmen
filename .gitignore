@@ -53,3 +53,6 @@ src-tauri/gen/apple/
 ios/*.xcodeproj/
 ios/**/Info.plist
 ios/build/
+
+# Local ArchiveTune clone / scratch working area (fork source reference)
+.tt/

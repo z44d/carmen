@@ -2,8 +2,9 @@ name: Build and Release
 
 # Single consolidated workflow — replaces ci.yml + build-desktop.yml +
 # build-android.yml. Layout (mirrors the proven z44d/serbase build.yml):
-#   * checks (frontend / rust / server / iOS) run on pushes + PRs;
-#     the iOS check is a native Xcode compile of ios/ (simulator), not Tauri;
+#   * checks (frontend / rust / server / Android / iOS) run on pushes + PRs;
+#     the Android check is a native Gradle assemble of android/, and the iOS
+#     check is a native Xcode compile of ios/ (simulator), not Tauri;
 #   * the desktop matrix, the Android job and the iOS job run for version tags
 #     (and for manual workflow_dispatch, so Windows/Android/iOS steps can be
 #     smoke-tested without tagging) and need all checks to be green first;
@@ -159,6 +160,43 @@ jobs:
         # This job must NOT start the server (`./venv/bin/python -m server`).
         run: ./venv/bin/python -c "import server.__main__"
 
+  # ─────────────────────── Android check (native Carmen app) ───────────────────────
+  android-check:
+    name: Android compile check (native app)
+    # Runs on every push/PR like the other checks — the native app has no web
+    # view to typecheck: a Gradle assemble is the compile gate (Kotlin, Hilt,
+    # Room, resources). JDK 27 temurin, matching the upstream Gradle recipe.
+    # TEMP: skipped for the iOS-only v1.1.1-alpha tag like the other non-iOS jobs.
+    if: github.ref_name != 'v1.1.1-alpha'
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v6
+        with:
+          distribution: temurin
+          java-version: '27'
+
+      - uses: gradle/actions/setup-gradle@v4
+
+      - name: Accept Android SDK licenses
+        # Ubuntu runners ship the Android SDK; AGP auto-provisions the pinned
+        # NDK (30.0.16248370) once the licenses are accepted.
+        run: |
+          set -euo pipefail
+          SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
+          SDKMANAGER="$SDK_ROOT/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -mindepth 2 -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)"
+          fi
+          yes | "$SDKMANAGER" --licenses > /dev/null || true
+
+      - name: Assemble the GMS mobile universal debug build
+        run: |
+          chmod +x android/gradlew
+          ./gradlew -p android :app:assembleGmsMobileUniversalDebug --stacktrace
+
   # ─────────────────────────── desktop bundles ───────────────────────────
   desktop:
     name: ${{ matrix.name }}
@@ -275,7 +313,7 @@ jobs:
 
   # ──────────────────────────── Android APK/AAB ────────────────────────────
   android:
-    name: Android release (APK + AAB)
+    name: Android release (native app, APK + AAB)
     # TEMP: v1.1.1-alpha is an iOS-only tag — every non-iOS job skips it.
     if: (github.ref_type == 'tag' || github.event_name == 'workflow_dispatch') && github.ref_name != 'v1.1.1-alpha'
     needs: [frontend, rust, server]
@@ -285,53 +323,21 @@ jobs:
       contents: write # attach APK/AAB to the GitHub release
     steps:
       - uses: actions/checkout@v4
-
-      - name: Linux system deps (Tauri webkit/appindicator)
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y --no-install-recommends \
-            libwebkit2gtk-4.1-dev \
-            build-essential \
-            curl \
-            wget \
-            file \
-            libxdo-dev \
-            libssl-dev \
-            libayatana-appindicator3-dev \
-            librsvg2-dev
-
-      - uses: actions/setup-node@v4
         with:
-          node-version: 20
-          cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            frontend/package-lock.json
+          # The native app codesigns from a committed keystore and the
+          # translation-credits script needs complete history (blame-based).
+          fetch-depth: 0
 
-      - uses: actions/setup-java@v4
+      - uses: actions/setup-java@v6
         with:
           distribution: temurin
-          java-version: '17'
+          java-version: '27'
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-linux-android,armv7-linux-androideabi,i686-linux-android,x86_64-linux-android
+      - uses: gradle/actions/setup-gradle@v4
 
-      - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri
-          shared-key: android
-
-      - name: Locate preinstalled sdkmanager + install a pinned NDK
-        # android-actions/setup-android@v3 is intentionally NOT used: its
-        # bootstrap runs `sdkmanager tools`, and the `tools` package no longer
-        # exists under cmdline-tools 16.x (that is exactly how the v1.0.0 tag
-        # run died: "Failed to find package 'tools'"). Ubuntu runners already
-        # ship the Android SDK, so we just drive the preinstalled sdkmanager
-        # directly. cargo-ndk is NOT required: the Gradle `rust` plugin invokes
-        # the Tauri CLI, which drives cargo + the NDK linkers itself and picks
-        # the newest directory under $ANDROID_HOME/ndk (we still export
-        # NDK_HOME explicitly for determinism).
+      - name: Accept Android SDK licenses
+        # Ubuntu runners ship the Android SDK; AGP auto-provisions the pinned
+        # NDK (30.0.16248370) once the licenses are accepted.
         run: |
           set -euo pipefail
           SDK_ROOT="${ANDROID_SDK_ROOT:-$ANDROID_HOME}"
@@ -339,72 +345,23 @@ jobs:
           if [ ! -x "$SDKMANAGER" ]; then
             SDKMANAGER="$(find "$SDK_ROOT/cmdline-tools" -mindepth 2 -maxdepth 3 -type f -name sdkmanager | sort -V | tail -1)"
           fi
-          echo "Using sdkmanager: $SDKMANAGER"
           yes | "$SDKMANAGER" --licenses > /dev/null || true
-          "$SDKMANAGER" --install "platform-tools" "ndk;29.0.13846066" \
-            || "$SDKMANAGER" --install "platform-tools" "ndk;27.0.12077973"
-          NDK_DIR="$(ls -1d "$SDK_ROOT"/ndk/* | sort -V | tail -1)"
-          echo "NDK_HOME=$NDK_DIR" >> "$GITHUB_ENV"
-          echo "Using NDK: $NDK_DIR"
 
-      - name: Install JS deps (root = Tauri CLI, frontend = vite build)
-        run: |
-          npm ci
-          npm --prefix frontend ci
-
-      - name: Generate src-tauri/gen/android when missing
-        # gen/android IS committed now — this only fires if it ever disappears.
-        # Locally the same thing is `npm run android:init`.
-        run: |
-          if [ ! -f src-tauri/gen/android/build.gradle.kts ]; then
-            npx tauri android init --ci
-          fi
-
-      - name: Ensure the Gradle wrapper is executable
-        # git usually preserves the exec bit, but a checkout that lost it
-        # would fail with "Permission denied" on ./gradlew.
-        run: chmod +x src-tauri/gen/android/gradlew
-
-      - name: Configure release signing from keystore secrets
-        # Signing follows https://v2.tauri.app/distribute/sign/android/ and the
-        # committed gen/android/app/build.gradle.kts, which reads
-        # gen/android/keystore.properties (keyAlias / password / storeFile):
-        #   * the keystore is decoded OUT of the repo into $RUNNER_TEMP
-        #   * keystore.properties is written next to build.gradle.kts
-        #     (the shipped .gitignore keeps it out of the repo)
-        # Required secrets (see DEVELOPMENT.md §10):
-        #   ANDROID_KEYSTORE_BASE64, ANDROID_KEYSTORE_PASSWORD,
-        #   ANDROID_KEYSTORE_ALIAS (+ optional ANDROID_KEY_PASSWORD).
-        # Without secrets the step exits early and the build stays unsigned.
-        env:
-          ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
-          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
-          ANDROID_KEYSTORE_ALIAS: ${{ secrets.ANDROID_KEYSTORE_ALIAS }}
-          # ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
-        run: |
-          set -euo pipefail
-          if [ -z "${ANDROID_KEYSTORE_BASE64}" ]; then
-            echo "::notice::ANDROID_KEYSTORE_BASE64 not set - building an UNSIGNED release."
-            exit 0
-          fi
-
-          printf '%s' "${ANDROID_KEYSTORE_BASE64}" | base64 -d > "${RUNNER_TEMP}/keystore.jks"
-
-          cat > src-tauri/gen/android/keystore.properties <<EOF
-          keyAlias=${ANDROID_KEYSTORE_ALIAS}
-          password=${ANDROID_KEYSTORE_PASSWORD}
-          storeFile=${RUNNER_TEMP}/keystore.jks
-          EOF
-          echo "Wrote src-tauri/gen/android/keystore.properties (values not logged)."
+      - name: Generate translation contributors (fastlane credit data)
+        run: python3 android/scripts/generate_translation_contributors.py
 
       - name: Build release APK + AAB
-        # Release mode is the DEFAULT — there is NO `--release` flag (clap
-        # aborts with "unexpected argument '--release'"; `--debug` opts into a
-        # debug build). `--apk`/`--aab` are Tauri CLI flags, not Gradle
-        # passthrough (anything after a bare `--` would go to Gradle instead).
-        # Outputs land under src-tauri/gen/android/app/build/outputs/
+        # Signed with the committed android/app/keystore/carmen.keystore (the
+        # build script falls back to in-tree credentials; STORE_PASSWORD /
+        # KEY_ALIAS / KEY_PASSWORD env vars can still override them).
+        # Outputs land under android/app/build/outputs/
         # (apk/<flavor>/release/*.apk, bundle/<flavor>Release/*.aab).
-        run: npx tauri android build --ci --apk --aab
+        run: |
+          chmod +x android/gradlew
+          ./gradlew -p android \
+            :app:assembleGmsMobileUniversalRelease \
+            :app:bundleGmsMobileUniversalRelease \
+            --stacktrace
 
       - name: Compose release body (Downloads table + .github/RELEASE_NOTES.md)
         if: github.ref_type == 'tag'
@@ -417,10 +374,11 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           files: |
-            src-tauri/gen/android/app/build/outputs/apk/**/*.apk
-            src-tauri/gen/android/app/build/outputs/bundle/**/*.aab
+            android/app/build/outputs/apk/**/*.apk
+            android/app/build/outputs/bundle/**/*.aab
           fail_on_unmatched_files: true
           body_path: ${{ runner.temp }}/release-body.md
+
 
   # ───────────────────────── iOS check (native Swift app) ─────────────────────────
   ios-check:
