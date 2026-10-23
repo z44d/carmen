@@ -195,7 +195,7 @@ jobs:
       - name: Assemble the GMS mobile universal debug build
         run: |
           chmod +x android/gradlew
-          ./gradlew -p android :app:assembleGmsMobileUniversalDebug --stacktrace
+          ./android/gradlew -p android :app:assembleGmsMobileUniversalDebug --stacktrace
 
   # ─────────────────────────── desktop bundles ───────────────────────────
   desktop:
@@ -358,7 +358,7 @@ jobs:
         # (apk/<flavor>/release/*.apk, bundle/<flavor>Release/*.aab).
         run: |
           chmod +x android/gradlew
-          ./gradlew -p android \
+          ./android/gradlew -p android \
             :app:assembleGmsMobileUniversalRelease \
             :app:bundleGmsMobileUniversalRelease \
             --stacktrace
