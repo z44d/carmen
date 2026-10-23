@@ -21,6 +21,7 @@ import {
 import type { Playlist } from '../../types/models';
 import { cdnArtwork } from '../../utils/track';
 import { ConfirmDialog, EmptyHint, PageSummary, PlaylistFormDialog } from './common';
+import SpotifyImportDialog, { SpotifyMark } from './SpotifyImportDialog';
 import { Artwork, EditIcon, MoreVertIcon, MusicNoteIcon, PlusIcon, TrashIcon } from './glyphs';
 
 interface PlaylistsSectionProps {
@@ -41,6 +42,7 @@ export default function PlaylistsSection({ onOpen }: PlaylistsSectionProps) {
   const [form, setForm] = useState<FormTarget | null>(null);
   const [deleteFor, setDeleteFor] = useState<Playlist | null>(null);
   const [deleting, setDeleting] = useState(false);
+  const [spotifyOpen, setSpotifyOpen] = useState(false);
 
   /** Playlist list + cover artwork (explicit cover video → first track). */
   const load = useCallback(async () => {
@@ -107,16 +109,29 @@ export default function PlaylistsSection({ onOpen }: PlaylistsSectionProps) {
     <section>
       <PageSummary
         action={
-          // MIGRATION: the kit Button has no `outlined` variant — the text
-          // variant plus a border class is the closest match.
-          <Button
-            variant="text"
-            className="border border-accent/50"
-            startIcon={<PlusIcon />}
-            onClick={() => setForm({ mode: 'create', playlist: null })}
-          >
-            New playlist
-          </Button>
+          <>
+            <Button
+              variant="contained"
+              aria-label="Import from Spotify"
+              startIcon={<SpotifyMark size={18} />}
+              onClick={() => setSpotifyOpen(true)}
+              className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760]"
+            >
+              {/* Short label on narrow phones so both actions fit. */}
+              <span aria-hidden className="hidden min-[420px]:inline">Import from Spotify</span>
+              <span aria-hidden className="min-[420px]:hidden">Import</span>
+            </Button>
+            {/* MIGRATION: the kit Button has no `outlined` variant — the text
+            variant plus a border class is the closest match. */}
+            <Button
+              variant="text"
+              className="border border-accent/50"
+              startIcon={<PlusIcon />}
+              onClick={() => setForm({ mode: 'create', playlist: null })}
+            >
+              New playlist
+            </Button>
+          </>
         }
       >
         {loading
@@ -236,6 +251,12 @@ export default function PlaylistsSection({ onOpen }: PlaylistsSectionProps) {
         busy={deleting}
         onConfirm={() => void handleDelete()}
         onClose={() => setDeleteFor(null)}
+      />
+
+      <SpotifyImportDialog
+        open={spotifyOpen}
+        onClose={() => setSpotifyOpen(false)}
+        onOpenPlaylist={onOpen}
       />
     </section>
   );

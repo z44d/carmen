@@ -34,6 +34,11 @@ tiny **FastAPI** backend that wraps YouTube Music, caches what it can
   thumbnail), everywhere.
 - **A UI that reads the room** — ambient background tinted from the cover,
   dark/light themes, motion artwork where albums have it.
+- **Spotify import** — paste any public Spotify playlist link and Carmen
+  fetches every song, finds its twin on YouTube Music (title + artist
+  matching with a confidence score), and saves the winners as a normal
+  library playlist. Works with zero setup; a Spotify app (see below)
+  makes it faster and more reliable.
 - **Degrades quietly** — no Redis? Uncached. No Telegram? Streams anyway.
   No network? Your downloads still play.
 
@@ -110,6 +115,8 @@ loaded automatically):
 | `BOT_TOKEN`  | –              | Bot token used to mirror songs into Telegram (optional).            |
 | `CHAT_ID`    | –              | Telegram chat that stores the cached songs (optional).              |
 | `TG_NAME`    | `ytmusic_cache` | Telegram session name.                                             |
+| `SPOTIFY_CLIENT_ID` | –        | Spotify app client id (optional — faster, more reliable Spotify import). |
+| `SPOTIFY_CLIENT_SECRET` | –    | Spotify app client secret (optional — faster, more reliable Spotify import). |
 | `DEBUG_LOGS` | off            | `1` → colored per-request logs, stream-tier traces, startup banner. |
 
 Then run it under any supervisor — e.g. systemd:
@@ -239,6 +246,19 @@ songs/<videoId>/
 
 ## 🧠 Worth knowing
 
+- **Spotify import needs no setup** — paste a public playlist link and it
+  just works: without credentials the server reads Spotify's public
+  playlist page directly. For busier servers, create a (free) app at
+  [developer.spotify.com/dashboard](https://developer.spotify.com/dashboard),
+  put its client id/secret in `SPOTIFY_CLIENT_ID` / `SPOTIFY_CLIENT_SECRET`,
+  and restart — the official API is then used instead (full pagination,
+  higher rate limits). Either way only **public** playlists can be read
+  (private ones answer 404 — that's a Spotify limitation, not a bug).
+  The API exposes
+  `GET /convert/spotify/playlist?url=…` (preview) and
+  `POST /convert/spotify/to-ytmusic` (server-sent-event stream: `start`,
+  one `progress` per track, `done`), and the Library's *Import from
+  Spotify* button drives the whole flow.
 - **Deno powers stream decryption** — yt-dlp runs the player's signature
   script through a JS runtime; the server configures Deno (`js_runtimes` in
   `server/core.py`), so it must be on the server's PATH.
