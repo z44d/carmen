@@ -1,36 +1,33 @@
 //
 //  NowPlayingView.swift
-//  Carmen — the full player.
+//  Carmen — the full player (Material 3 clone of the Android player screen).
 //
 //  Mounted by RootView as an overlay that slides up from the mini bar
 //  (`Player.expansion` drives the offset; dragging the header tracks the
-//  finger back down). Inside: adaptive artwork (motion video when the track
-//  has any, growing with the sheet), metadata with a favorite heart, the
-//  scrubber, transport with shuffle/repeat, and the Lyrics / Related
-//  action pill that swaps the content area for a panel with a compact card +
-//  playing bar above it — the web client's panel takeover, with the scrubber
-//  and transport always one glance away. (The queue lives in its own tab,
-//  next to Search, like the frontend's drawer.)
+//  finger back down — that contract lives in RootView and must not change).
+//  Inside: the ambient blurred-cover backdrop washed with the artwork's own
+//  colour (adaptive accent), motion artwork that grows with the sheet,
+//  centered metadata, a capsule scrubber, transport with shuffle/repeat, and
+//  a bottom action bar (Lyrics / Queue / Related / Download) whose toggles
+//  swap the content area for a panel takeover — compact now-playing card +
+//  thin progress rail + the panel body, exactly like the web client's panel
+//  takeover, with dismiss one tap away.
 //
-//  Theming is ambient: the blurred cover fills the background and, when
-//  Settings → Appearance → Adaptive Accent is on, the cover's own colour
-//  washes the whole player so the surface belongs to the record. Panels
-//  stay transparent over that wash instead of masking it with a material.
-//  Liquid Glass via the Glass.swift wrappers; the player is always a dark
-//  surface, so the content is evaluated as dark regardless of system
-//  appearance.
+//  The player is always a dark surface: the content is re-themed with dark
+//  Material roles and evaluated as dark regardless of system appearance.
 //
 
 import SwiftUI
 
 enum PlayerPanel: String, CaseIterable, Identifiable {
-    case lyrics, related
+    case lyrics, queue, related
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
         case .lyrics: return "Lyrics"
+        case .queue: return "Queue"
         case .related: return "Related"
         }
     }
@@ -38,6 +35,7 @@ enum PlayerPanel: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .lyrics: return "text.quote"
+        case .queue: return "list.bullet"
         case .related: return "sparkles"
         }
     }
@@ -45,6 +43,7 @@ enum PlayerPanel: String, CaseIterable, Identifiable {
 
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
 
     @State private var activePanel: PlayerPanel?
     @State private var scrubTime: Double = 0
@@ -64,8 +63,8 @@ struct NowPlayingView: View {
             }
         }
         .onAppear {
-            // A panel the player asked for (mini-bar queue button, Related
-            // tap while playing) — open straight into it once.
+            // A panel the player asked for (openPlayer(panel:)) — open
+            // straight into it once.
             if let panel = player.pendingPanel {
                 activePanel = panel
                 player.pendingPanel = nil
@@ -84,7 +83,7 @@ struct NowPlayingView: View {
 
                 if let panel = activePanel {
                     compactCard(for: track)
-                    playingBar
+                    thinProgressBar
                     panelBody(panel)
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
                         .transition(.opacity.combined(with: .move(edge: .bottom)))
@@ -97,7 +96,10 @@ struct NowPlayingView: View {
                 actionBar(for: track)
             }
         }
-        .environment(\.colorScheme, .dark)  // the backdrop is always dark
+        // The backdrop is always dark — re-derive the Material roles for the
+        // player subtree (m3Theme reads the scheme set right below it).
+        .m3Theme()
+        .environment(\.colorScheme, .dark)
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: activePanel)
     }
 
@@ -116,15 +118,15 @@ struct NowPlayingView: View {
     private var header: some View {
         VStack(spacing: 6) {
             Capsule()
-                .fill(.secondary.opacity(0.5))
+                .fill(m3.onSurfaceVariant.opacity(0.5))
                 .frame(width: 36, height: 5)
             HStack {
                 Button {
                     player.closePlayer()
                 } label: {
                     Image(systemName: "chevron.down")
-                        .font(.subheadline.weight(.semibold))
-                        .foregroundStyle(.secondary)
+                        .font(.footnote.weight(.semibold))
+                        .foregroundStyle(m3.onSurfaceVariant)
                         .frame(width: 32, height: 32)
                         .contentShape(Rectangle())
                 }
@@ -133,9 +135,9 @@ struct NowPlayingView: View {
 
                 Spacer()
                 Text("NOW PLAYING")
-                    .font(.caption2.weight(.semibold))
+                    .font(.m3LabelSmall)
                     .tracking(1.2)
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(m3.onSurfaceVariant)
                 Spacer()
 
                 Color.clear.frame(width: 32, height: 32)
@@ -183,58 +185,80 @@ struct NowPlayingView: View {
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .shadow(color: .black.opacity(0.35), radius: 22, y: 12)
+        .clipShape(M3Shape.card)
+        .shadow(color: m3.scrim.opacity(0.35), radius: 22, y: 12)
         .scaleEffect(0.5 + 0.5 * expansion)
         .opacity(0.35 + 0.65 * expansion)
-        .frame(maxHeight: 420)
-        .padding(.bottom, 20)
+        .frame(maxHeight: 330)
+        .padding(.bottom, 16)
     }
 
     private func metadata(for track: Track) -> some View {
         HStack(alignment: .center, spacing: 12) {
-            VStack(alignment: .leading, spacing: 3) {
+            VStack(spacing: 4) {
                 HStack(spacing: 5) {
                     Text(track.title)
-                        .font(.title3.weight(.semibold))
-                        .lineLimit(1)
-                        .foregroundStyle(.primary)
+                        .font(.m3TitleLarge)
+                        .foregroundStyle(m3.onSurface)
+                        .lineLimit(2)
+                        .minimumScaleFactor(0.8)
+                        .multilineTextAlignment(.center)
                     if track.isExplicit { ExplicitBadge() }
                 }
-                HStack(spacing: 4) {
-                    Text(track.artistLine)
-                        .font(.subheadline)
-                        .lineLimit(1)
-                        .foregroundStyle(.secondary)
-                    if !track.albumName.isEmpty {
-                        Text("·")
-                            .foregroundStyle(.secondary)
-                        Text(track.albumName)
-                            .font(.subheadline)
-                            .lineLimit(1)
-                            .foregroundStyle(.secondary.opacity(0.8))
-                    }
-                }
+                Text(track.artistLine)
+                    .font(.m3BodyLarge)
+                    .foregroundStyle(m3.onSurfaceVariant)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.85)
             }
-            Spacer(minLength: 8)
+            .frame(maxWidth: .infinity, alignment: .center)
+
             FavoriteButton(track: track)
         }
         .padding(.bottom, 14)
     }
 
+    /// Capsule scrubber: surface-highest track, primary fill up to the
+    /// playhead, circular thumb — seek on release.
     private var scrubber: some View {
-        VStack(spacing: 4) {
-            Slider(
-                value: Binding(
-                    get: { isScrubbing ? scrubTime : player.currentTime },
-                    set: { scrubTime = $0 }
-                ),
-                in: 0...max(player.duration, 1)
-            ) { editing in
-                isScrubbing = editing
-                if !editing { player.seek(to: scrubTime) }
+        VStack(spacing: 6) {
+            GeometryReader { proxy in
+                let width = max(proxy.size.width, 1)
+                let total = max(player.duration, 1)
+                let shown = isScrubbing ? scrubTime : player.currentTime
+                let fraction = min(max(shown / total, 0), 1)
+                let playable = player.duration > 0
+
+                ZStack(alignment: .leading) {
+                    Capsule()
+                        .fill(m3.surfaceContainerHighest)
+                    Capsule()
+                        .fill(m3.primary)
+                        .frame(width: max(0, width * fraction))
+                    Circle()
+                        .fill(m3.primary)
+                        .frame(width: 14, height: 14)
+                        .offset(x: max(0, min(width - 14, width * fraction - 7)))
+                }
+                .frame(height: 20)
+                .contentShape(Rectangle())
+                .opacity(playable ? 1 : 0.4)
+                .gesture(
+                    DragGesture(minimumDistance: 0)
+                        .onChanged { value in
+                            // No duration yet → the track is parked, not seekable.
+                            guard player.duration > 0 else { return }
+                            isScrubbing = true
+                            scrubTime = min(max(value.location.x / width, 0), 1) * player.duration
+                        }
+                        .onEnded { _ in
+                            guard isScrubbing else { return }
+                            isScrubbing = false
+                            player.seek(to: scrubTime)
+                        }
+                )
             }
-            .tint(.white)
+            .frame(height: 20)
 
             HStack {
                 Text(formatClock(isScrubbing ? scrubTime : player.currentTime))
@@ -245,34 +269,34 @@ struct NowPlayingView: View {
                     )
                 )
             }
-            .font(.caption.monospacedDigit())
-            .foregroundStyle(.secondary)
+            .font(.m3LabelSmall.monospacedDigit())
+            .foregroundStyle(m3.onSurfaceVariant)
         }
-        .padding(.bottom, 18)
+        .padding(.bottom, 14)
     }
 
-    /// shuffle · previous · play · next · repeat — Apple Music's order.
+    /// shuffle · previous · play · next · repeat — evenly spaced, the play
+    /// circle the only filled surface.
     private var transport: some View {
         HStack(spacing: 0) {
             Button {
                 player.shuffle.toggle()
             } label: {
                 Image(systemName: "shuffle")
-                    .font(.title3)
-                    .foregroundStyle(player.shuffle ? Color.carmen : .secondary)
+                    .font(.system(size: 17, weight: .medium))
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(M3IconButtonStyle(foreground: player.shuffle ? m3.primary : m3.onSurfaceVariant))
 
             Button {
                 player.previous()
             } label: {
                 Image(systemName: "backward.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(m3.onSurface)
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(M3IconButtonStyle(foreground: m3.onSurface))
             .opacity(player.hasPrevious ? 1 : 0.35)
 
             Button {
@@ -280,14 +304,15 @@ struct NowPlayingView: View {
             } label: {
                 ZStack {
                     Circle()
-                        .fill(.primary.opacity(0.12))
+                        .fill(m3.primary)
                     if player.isBuffering {
                         ProgressView()
                             .controlSize(.large)
+                            .tint(m3.onPrimary)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 28))
-                            .foregroundStyle(.primary)
+                            .font(.system(size: 26, weight: .semibold))
+                            .foregroundStyle(m3.onPrimary)
                             .offset(x: player.isPlaying ? 0 : 2)  // optical centering
                     }
                 }
@@ -295,16 +320,17 @@ struct NowPlayingView: View {
                 .frame(maxWidth: .infinity)
             }
             .buttonStyle(.plain)
+            .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
             Button {
                 player.next()
             } label: {
                 Image(systemName: "forward.fill")
-                    .font(.system(size: 28))
-                    .foregroundStyle(.primary)
+                    .font(.system(size: 22, weight: .semibold))
+                    .foregroundStyle(m3.onSurface)
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(M3IconButtonStyle(foreground: m3.onSurface))
             .opacity(player.hasNext ? 1 : 0.35)
 
             Button {
@@ -315,139 +341,109 @@ struct NowPlayingView: View {
                 }
             } label: {
                 Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .font(.title3)
-                    .foregroundStyle(player.repeatMode == .off ? Color.secondary : Color.carmen)
+                    .font(.system(size: 17, weight: .medium))
                     .frame(maxWidth: .infinity)
             }
-            .buttonStyle(.plain)
+            .buttonStyle(
+                M3IconButtonStyle(
+                    foreground: player.repeatMode == .off ? m3.onSurfaceVariant : m3.primary
+                )
+            )
+            .accessibilityLabel("Repeat \(player.repeatMode.label)")
         }
         .padding(.bottom, 14)
     }
 
-    /// Panel mode keeps the scrubber + transport alive under the compact
-    /// card (queueing songs shouldn't stop you from skipping or seeking).
-    private var playingBar: some View {
-        VStack(spacing: 2) {
-            Slider(
-                value: Binding(
-                    get: { isScrubbing ? scrubTime : player.currentTime },
-                    set: { scrubTime = $0 }
-                ),
-                in: 0...max(player.duration, 1)
-            ) { editing in
-                isScrubbing = editing
-                if !editing { player.seek(to: scrubTime) }
-            }
-            .tint(.white)
-
-            HStack(spacing: 0) {
-                Button {
-                    player.previous()
-                } label: {
-                    Image(systemName: "backward.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .opacity(player.hasPrevious ? 1 : 0.35)
-
-                Button {
-                    player.togglePlayPause()
-                } label: {
-                    ZStack {
-                        Circle()
-                            .fill(.primary.opacity(0.12))
-                        if player.isBuffering {
-                            ProgressView()
-                                .controlSize(.regular)
-                        } else {
-                            Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                                .font(.system(size: 20))
-                                .foregroundStyle(.primary)
-                                .offset(x: player.isPlaying ? 0 : 1.5)
-                        }
-                    }
-                    .frame(width: 44, height: 44)
-                    .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-
-                Button {
-                    player.next()
-                } label: {
-                    Image(systemName: "forward.fill")
-                        .font(.system(size: 20))
-                        .foregroundStyle(.primary)
-                        .frame(maxWidth: .infinity)
-                }
-                .buttonStyle(.plain)
-                .opacity(player.hasNext ? 1 : 0.35)
+    /// Panel mode keeps the playhead one glance away: a 3pt progress rail
+    /// under the compact card (seeking stays in the artwork view).
+    private var thinProgressBar: some View {
+        GeometryReader { proxy in
+            ZStack(alignment: .leading) {
+                Capsule()
+                    .fill(m3.surfaceContainerHighest)
+                Capsule()
+                    .fill(m3.primary)
+                    .frame(width: max(0, proxy.size.width * player.progress))
             }
         }
-        .padding(.horizontal, 24)
-        .padding(.bottom, 10)
+        .frame(height: 3)
+        .padding(.horizontal, 20)
+        .padding(.bottom, 12)
     }
 
     // MARK: Panels
 
-    /// The bottom pill — the mini bar's twin (same 56 pt height, same 16 pt
-    /// radius, same inset): Lyrics / Related cells + the download control.
-    /// Tapping the active cell returns to the artwork view (frontend parity).
+    /// The bottom action bar — Lyrics / Queue / Related toggles plus the
+    /// download control for the current track. Tapping the active toggle
+    /// returns to the artwork view (frontend parity).
     private func actionBar(for track: Track) -> some View {
         HStack(spacing: 0) {
             ForEach(PlayerPanel.allCases) { panel in
                 Button {
-                    withAnimation {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
                         activePanel = activePanel == panel ? nil : panel
                     }
                 } label: {
-                    VStack(spacing: 2) {
+                    VStack(spacing: 3) {
                         Image(systemName: panel.symbol)
-                            .font(.footnote)
+                            .font(.system(size: 16, weight: .medium))
+                            .frame(height: 30)
                         Text(panel.title)
-                            .font(.system(size: 10, weight: .medium))
+                            .font(.m3LabelSmall)
+                            .lineLimit(1)
+                            .minimumScaleFactor(0.8)
                     }
-                    .foregroundStyle(activePanel == panel ? Color.carmen : Color.secondary)
+                    .foregroundStyle(activePanel == panel ? m3.primary : m3.onSurfaceVariant)
                     .frame(maxWidth: .infinity)
                     .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(panel.title)
             }
 
-            DownloadButton(track: track, diameter: 20)
-                .frame(maxWidth: .infinity)
+            VStack(spacing: 3) {
+                DownloadButton(track: track, diameter: 18)
+                    .frame(height: 30)
+                Text("Download")
+                    .font(.m3LabelSmall)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.8)
+                    .foregroundStyle(m3.onSurfaceVariant)
+            }
+            .frame(maxWidth: .infinity)
         }
         .padding(.horizontal, 12)
-        .frame(height: 56)
-        .glassCard(cornerRadius: 16)
-        .padding(.horizontal, 8)
+        .padding(.vertical, 8)
+        .background(m3.surfaceContainerHigh, in: M3Shape.sheet)
+        .padding(.horizontal, 12)
         .padding(.bottom, 6)
     }
 
     /// Compact now-playing card above an open panel (the takeover header).
     private func compactCard(for track: Track) -> some View {
         HStack(spacing: 12) {
-            ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 6)
+            ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 8)
                 .frame(width: 44, height: 44)
             VStack(alignment: .leading, spacing: 2) {
                 Text(track.title)
-                    .font(.subheadline.weight(.semibold))
+                    .font(.m3BodyMedium.weight(.semibold))
+                    .foregroundStyle(m3.onSurface)
                     .lineLimit(1)
-                    .foregroundStyle(.primary)
                 Text(track.artistLine)
-                    .font(.caption)
+                    .font(.m3BodySmall)
+                    .foregroundStyle(m3.onSurfaceVariant)
                     .lineLimit(1)
-                    .foregroundStyle(.secondary)
             }
             Spacer(minLength: 8)
             FavoriteButton(track: track)
             Button {
-                withAnimation { activePanel = nil }
+                withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                    activePanel = nil
+                }
             } label: {
                 Image(systemName: "chevron.down")
                     .font(.subheadline.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .foregroundStyle(m3.onSurfaceVariant)
                     .frame(width: 32, height: 32)
                     .contentShape(Rectangle())
             }
@@ -455,7 +451,7 @@ struct NowPlayingView: View {
             .accessibilityLabel("Back to Player")
         }
         .padding(.horizontal, 20)
-        .padding(.bottom, 10)
+        .padding(.bottom, 8)
     }
 
     /// Panels float over the ambient wash: a clear → black scrim dims the
@@ -468,8 +464,8 @@ struct NowPlayingView: View {
                 LinearGradient(
                     stops: [
                         .init(color: .clear, location: 0),
-                        .init(color: .black.opacity(0.35), location: 0.35),
-                        .init(color: .black.opacity(0.6), location: 1),
+                        .init(color: m3.scrim.opacity(0.35), location: 0.35),
+                        .init(color: m3.scrim.opacity(0.6), location: 1),
                     ],
                     startPoint: .top,
                     endPoint: .bottom
@@ -481,6 +477,7 @@ struct NowPlayingView: View {
     private func panelContent(_ panel: PlayerPanel) -> some View {
         switch panel {
         case .lyrics: LyricsView()
+        case .queue: QueuePanel()
         case .related: RelatedPanel()
         }
     }

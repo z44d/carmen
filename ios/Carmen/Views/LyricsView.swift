@@ -2,57 +2,88 @@
 //  LyricsView.swift
 //  Carmen — the lyrics panel shown inside the Now Playing screen.
 //
-//  Apple-Music-style karaoke: the current line is bold rounded white and
-//  sharp, every other line sits blurred and dimmed around it, and the swap
-//  rides a spring. Lines auto-scroll with the playhead and seek on tap
-//  (same as the web client); `♪` instrumental rows stay quiet. Providers
-//  that only gave plain text render as a scrollable paragraph with the
-//  source credited underneath.
+//  Apple-Music-style karaoke: the current line is bold white and sharp,
+//  every other line sits blurred and dimmed around it, and the swap rides a
+//  spring. Lines auto-scroll with the playhead and seek on tap (same as the
+//  web client); `♪` instrumental rows stay quiet. Providers that only gave
+//  plain text (or a synced-off preference) render as a scrollable paragraph
+//  with the source credited underneath. M3 chrome: a small panel header and
+//  shimmer skeletons while the lyrics load.
 //
 
 import SwiftUI
 
 struct LyricsView: View {
     @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
 
     var body: some View {
-        Group {
-            if player.lyricsLoading {
-                ProgressView()
-                    .frame(maxWidth: .infinity, maxHeight: .infinity)
-            } else if let lyrics = player.lyrics {
-                if lyrics.hasSyncedLines, let lines = lyrics.synced {
-                    syncedBody(lines)
-                } else if let plain = lyrics.plainText {
-                    unsyncedBody(plain, source: lyrics.source)
+        VStack(spacing: 0) {
+            header
+
+            Group {
+                if player.lyricsLoading {
+                    loading
+                } else if let lyrics = player.lyrics {
+                    if lyrics.hasSyncedLines, player.syncedLyricsEnabled, let lines = lyrics.synced {
+                        syncedBody(lines)
+                    } else if let plain = lyrics.plainText {
+                        unsyncedBody(plain, source: lyrics.source)
+                    } else {
+                        unavailable
+                    }
                 } else {
                     unavailable
                 }
-            } else {
-                unavailable
             }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 8)
+        .padding(.bottom, 8)
+    }
+
+    /// Small panel header — the Material chrome around the karaoke body.
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("Lyrics")
+                .font(.m3TitleMedium)
+                .foregroundStyle(m3.onSurface)
+            Spacer(minLength: 8)
+        }
+        .padding(.bottom, 6)
+    }
+
+    /// Skeleton shaped like a run of lyric lines while the fetch resolves.
+    private var loading: some View {
+        VStack(alignment: .leading, spacing: 18) {
+            ShimmerBlock(height: 26, radius: 10)
+                .frame(width: 230)
+            ShimmerBlock(height: 26, radius: 10)
+                .frame(width: 170)
+            ShimmerBlock(height: 26, radius: 10)
+                .frame(width: 280)
+            ShimmerBlock(height: 20, radius: 9)
+                .frame(width: 200)
+            ShimmerBlock(height: 20, radius: 9)
+                .frame(width: 250)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+        .padding(.top, 12)
     }
 
     private var unavailable: some View {
-        VStack(spacing: 8) {
-            Image(systemName: "quote.opening")
-                .font(.title2)
-                .foregroundStyle(.secondary)
-            Text("No lyrics available")
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        M3EmptyState(
+            title: "No Lyrics",
+            hint: "No lyrics came back for this song.",
+            systemImage: "quote.opening"
+        )
     }
 
     // MARK: Synced
 
-    /// Apple-Music-style karaoke: the current line is bold, rounded, pure
-    /// white and sharp; every other line sits blurred and dimmed around it,
-    /// and the swap between them rides a spring. Tap any line to seek there.
+    /// Karaoke: the current line is bold, pure white and sharp; every other
+    /// line sits blurred and dimmed around it, and the swap between them
+    /// rides a spring. Tap any line to seek there.
     private func syncedBody(_ lines: [Lyrics.Line]) -> some View {
         // The active *vocal* line — filler (`♪`) rows never get highlighted.
         let elapsedMs = Int(player.currentTime * 1000)
@@ -71,11 +102,10 @@ struct LyricsView: View {
                                 .font(
                                     .system(
                                         size: isActive ? 28 : 20,
-                                        weight: isActive ? .bold : .semibold,
-                                        design: .rounded
+                                        weight: isActive ? .bold : .semibold
                                     )
                                 )
-                                .foregroundStyle(isActive ? Color.white : Color.white.opacity(0.4))
+                                .foregroundStyle(Color.white.opacity(isActive ? 1 : 0.4))
                                 .lineLimit(2)
                                 .multilineTextAlignment(.leading)
                                 .frame(maxWidth: .infinity, alignment: .leading)
@@ -120,16 +150,19 @@ struct LyricsView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 14) {
                 Text(plain)
-                    .font(.title3)
+                    .font(.m3TitleLarge)
+                    .foregroundStyle(m3.onSurface)
                     .lineSpacing(6)
                     .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(.top, 8)
                 if let source, !source.isEmpty {
                     Text("Lyrics: \(source)")
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
+                        .font(.m3BodySmall)
+                        .foregroundStyle(m3.onSurfaceVariant)
                 }
             }
             .padding(.vertical, 8)
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 }
