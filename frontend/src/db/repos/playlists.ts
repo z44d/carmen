@@ -5,8 +5,10 @@
  * playable (and displayable) even when the audio was never downloaded.
  */
 import type { Playlist, PlaylistSong, Track } from '../../types/models';
+import { getTrackRecord } from '../../services/storage';
 import { getDb, toBool } from '../connection';
 import { fallbackGet, fallbackSet, usingFallback } from './fallback';
+import { favoriteIds } from './favorites';
 import { mapSongRow, type SongRow } from './rows';
 import { ensureTrack, upsertTrack } from './tracks';
 
@@ -39,6 +41,33 @@ function mapPlaylistRow(row: PlaylistRow): Playlist {
     createdAt: row.created_at,
     updatedAt: row.updated_at,
   };
+}
+
+/** Browser-fallback membership rows — the SQL `playlist_tracks` equivalent. */
+interface FallbackPlaylistTrack {
+  videoId: string;
+  position: number;
+  addedAt: number;
+}
+
+const fallbackTracksKey = (playlistId: number) => `playlist_tracks:${playlistId}`;
+
+function readFallbackTracks(playlistId: number): FallbackPlaylistTrack[] {
+  const rows = fallbackGet<FallbackPlaylistTrack[]>(fallbackTracksKey(playlistId), []);
+  return [...rows].sort((a, b) => a.position - b.position);
+}
+
+function writeFallbackTracks(playlistId: number, rows: FallbackPlaylistTrack[]): void {
+  const ordered = rows.map((row, index) => ({ ...row, position: index }));
+  fallbackSet(fallbackTracksKey(playlistId), ordered);
+  // Keep the card's song count honest in the browser build.
+  const lists = fallbackGet<Playlist[]>('playlists', []);
+  fallbackSet(
+    'playlists',
+    lists.map((p) =>
+      p.id === playlistId ? { ...p, trackCount: ordered.length, updatedAt: Date.now() } : p,
+    ),
+  );
 }
 
 export async function listPlaylists(): Promise<Playlist[]> {
@@ -127,6 +156,7 @@ export async function deletePlaylist(id: number): Promise<void> {
       'playlists',
       fallbackGet<Playlist[]>('playlists', []).filter((p) => p.id !== id),
     );
+    fallbackSet(fallbackTracksKey(id), []);
     return;
   }
   const db = await getDb();
@@ -150,7 +180,15 @@ export async function setPlaylistFavorite(id: number, favorite: boolean): Promis
 
 /** Adds a song (upserting its metadata) at the end of the playlist. */
 export async function addTrackToPlaylist(playlistId: number, track: Track): Promise<void> {
-  if (usingFallback) return;
+  if (usingFallback) {
+    await upsertTrack(track);
+    const rows = readFallbackTracks(playlistId);
+    if (!rows.some((row) => row.videoId === track.videoId)) {
+      rows.push({ videoId: track.videoId, position: rows.length, addedAt: Date.now() });
+      writeFallbackTracks(playlistId, rows);
+    }
+    return;
+  }
   await upsertTrack(track);
   const db = await getDb();
   const position = await db
@@ -168,7 +206,13 @@ export async function addTrackToPlaylist(playlistId: number, track: Track): Prom
 }
 
 export async function removeTrackFromPlaylist(playlistId: number, videoId: string): Promise<void> {
-  if (usingFallback) return;
+  if (usingFallback) {
+    writeFallbackTracks(
+      playlistId,
+      readFallbackTracks(playlistId).filter((row) => row.videoId !== videoId),
+    );
+    return;
+  }
   const db = await getDb();
   await db.execute(
     'DELETE FROM playlist_tracks WHERE playlist_id = $1 AND video_id = $2',
@@ -192,7 +236,16 @@ export async function moveTrackInPlaylist(
   videoId: string,
   toPosition: number,
 ): Promise<void> {
-  if (usingFallback) return;
+  if (usingFallback) {
+    const rows = readFallbackTracks(playlistId);
+    const from = rows.findIndex((row) => row.videoId === videoId);
+    if (from < 0) return;
+    const [moved] = rows.splice(from, 1);
+    const target = Math.min(Math.max(toPosition, 0), rows.length);
+    rows.splice(target, 0, moved!);
+    writeFallbackTracks(playlistId, rows);
+    return;
+  }
   const db = await getDb();
   const rows = await db.select<{ video_id: string }[]>(
     'SELECT video_id FROM playlist_tracks WHERE playlist_id = $1 ORDER BY position ASC',
@@ -223,7 +276,22 @@ const SONG_JOIN = `
 
 /** Playlist songs in stored order (works offline for downloaded tracks). */
 export async function listPlaylistTracks(playlistId: number): Promise<PlaylistSong[]> {
-  if (usingFallback) return [];
+  if (usingFallback) {
+    const rows = readFallbackTracks(playlistId);
+    const favs = new Set(await favoriteIds());
+    const songs: PlaylistSong[] = [];
+    for (const row of rows) {
+      const track = await getTrackRecord(row.videoId);
+      if (!track) continue;
+      songs.push({
+        ...track,
+        isFavorite: favs.has(row.videoId),
+        isDownloaded: false,
+        audioPath: null,
+      });
+    }
+    return songs;
+  }
   const db = await getDb();
   const rows = await db.select<SongRow[]>(
     `${SONG_JOIN} WHERE pt.playlist_id = $1 ORDER BY pt.position ASC`,
