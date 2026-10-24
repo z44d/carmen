@@ -6,63 +6,6 @@
 
 import SwiftUI
 
-// MARK: - Accent
-
-extension Color {
-    /// Hex string ("#RRGGBB") → Color.
-    init(hex: String) {
-        var value: UInt64 = 0
-        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
-        self.init(
-            .sRGB,
-            red: Double((value >> 16) & 0xFF) / 255,
-            green: Double((value >> 8) & 0xFF) / 255,
-            blue: Double(value & 0xFF) / 255,
-            opacity: 1
-        )
-    }
-
-    /// The hex the whole app currently themes by: the playing cover's own
-    /// colour when Settings → Appearance → Adaptive Accent is on (frontend
-    /// parity), else the chosen palette accent.
-    @MainActor private static var effectiveHex: String {
-        let settings = SettingsStore.shared
-        if settings.adaptiveAccentEnabled, let hex = Player.shared.adaptiveColorHex, !hex.isEmpty {
-            return hex
-        }
-        return settings.accent.hex
-    }
-
-    /// The app-wide accent. Read through the observable stores so every
-    /// surface re-renders live — including when the cover's colour lands
-    /// mid-song.
-    @MainActor static var carmen: Color { Color(hex: effectiveHex) }
-
-    /// Ink for filled-accent surfaces (play button, FABs): stays readable on
-    /// the near-white accents — the palette's "no colour here" answer too.
-    /// The hex reaches us as "#FFFFFF", so compare the *stripped* value.
-    @MainActor static var carmenOnAccent: Color {
-        isNearWhite(effectiveHex) ? .black.opacity(0.85) : .white
-    }
-
-    /// Tint for system controls (switches, sliders, ProgressView): a white
-    /// accent would draw them in white-on-white, so near-white accents flip
-    /// to black ink there — same rule as the frontend gives white.
-    @MainActor static var carmenControlTint: Color {
-        isNearWhite(effectiveHex) ? .black : carmen
-    }
-
-    /// "#FFFFFF", "ffffff", "  #fefefe " … — all "close enough to white".
-    private static func isNearWhite(_ hex: String) -> Bool {
-        var value: UInt64 = 0
-        Scanner(string: hex.trimmingCharacters(in: CharacterSet(charactersIn: "#"))).scanHexInt64(&value)
-        let red = (value >> 16) & 0xFF
-        let green = (value >> 8) & 0xFF
-        let blue = value & 0xFF
-        return red >= 235 && green >= 235 && blue >= 235
-    }
-}
-
 // MARK: - Navigation
 
 /// Push destinations, built from feed/search cards. Songs and stations are
