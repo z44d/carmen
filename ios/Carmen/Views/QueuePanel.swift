@@ -103,10 +103,10 @@ struct QueuePanel: View {
 
     private var upcomingList: some View {
         VStack(spacing: 0) {
-            ForEach(Array(upcoming.enumerated()), id: \.offset) { pair in
-                let offset = pair.offset
-                let track = pair.element
-                let index = upcomingStart + offset
+            // ArraySlice indices are the base array's — `index` here IS the
+            // absolute queue position, no offset arithmetic needed.
+            ForEach(upcoming.indices, id: \.self) { index in
+                let track = upcoming[index]
 
                 QueuePanelRow(track: track)
                     .contentShape(Rectangle())
