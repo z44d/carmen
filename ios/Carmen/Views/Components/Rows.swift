@@ -388,7 +388,7 @@ struct SectionHeader: View {
         self.menuContent = nil
     }
 
-    init<Menu: View>(title: String, menuItems: @ViewBuilder () -> Menu) {
+    init<Menu: View>(title: String, @ViewBuilder menuItems: () -> Menu) {
         self.title = title
         self.actionTitle = nil
         self.action = nil
