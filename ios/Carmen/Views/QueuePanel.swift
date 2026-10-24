@@ -22,6 +22,14 @@ struct QueuePanel: View {
         player.queue.indices.contains(upcomingStart)
             ? player.queue[upcomingStart...] : player.queue[0..<0]
     }
+    /// The upcoming rows as an absolute range of queue indices — spelled as
+    /// `Range<Int>` explicitly: a bare `.indices` on the slice resolves
+    /// ambiguously against the SDK's RangeSet-returning `indices(where:)`.
+    private var upcomingRange: Range<Int> {
+        let queue = player.queue
+        return queue.indices.contains(upcomingStart)
+            ? upcomingStart..<queue.count : 0..<0
+    }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -103,10 +111,8 @@ struct QueuePanel: View {
 
     private var upcomingList: some View {
         VStack(spacing: 0) {
-            // ArraySlice indices are the base array's — `index` here IS the
-            // absolute queue position, no offset arithmetic needed.
-            ForEach(upcoming.indices, id: \.self) { index in
-                let track = upcoming[index]
+            ForEach(upcomingRange, id: \.self) { index in
+                let track = player.queue[index]
 
                 QueuePanelRow(track: track)
                     .contentShape(Rectangle())
