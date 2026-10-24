@@ -157,7 +157,7 @@ extension View {
         sheet(isPresented: isPresented) {
             SheetMenuView(title: title, content: content)
                 .presentationDetents([.medium, .large])
-                .presentationGrabber(true)
+                .presentationDragIndicator(.visible)
                 .presentationCornerRadius(28)
         }
     }

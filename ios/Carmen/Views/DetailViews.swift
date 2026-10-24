@@ -41,7 +41,7 @@ private struct DetailHero<Trailing: View>: View {
     @Environment(\.m3) private var m3
     @Environment(Player.self) private var player
 
-    init<Trailing: View>(
+    init(
         title: String,
         artworkURL: String?,
         placeholderSymbol: String = "music.note",
