@@ -1,56 +1,12 @@
 //
 //  Components.swift
-//  Carmen — the shared building blocks every screen composes from:
-//  navigation routes, artwork, track rows, feed tiles and state views.
+//  Carmen — legacy shared blocks still used by the pre-Material screens
+//  (state views, track rows, feed tiles). Every declaration here dies with
+//  its last consumer during the Android-parity rewrite; the Material
+//  vocabulary lives in Views/Components/ and Views/Theme/.
 //
 
 import SwiftUI
-
-// MARK: - Navigation
-
-/// Push destinations, built from feed/search cards. Songs and stations are
-/// *played*, not pushed, so they never produce a route.
-enum Route: Hashable {
-    case album(browseId: String, title: String)
-    case artist(channelId: String, title: String)
-    case playlist(playlistId: String, title: String)
-
-    init?(card: MediaCard) {
-        guard !card.targetId.isEmpty else { return nil }
-        switch card.kind {
-        case .album: self = .album(browseId: card.targetId, title: card.title)
-        case .artist: self = .artist(channelId: card.targetId, title: card.title)
-        case .playlist: self = .playlist(playlistId: card.targetId, title: card.title)
-        case .song, .station, .unsupported: return nil
-        }
-    }
-}
-
-/// The single place card taps and `NavigationLink`s resolve to screens.
-/// Applied to every tab's NavigationStack via `.carmenDestinations()`.
-struct CarmenDestinations: ViewModifier {
-    func body(content: Content) -> some View {
-        content.navigationDestination(for: Route.self) { route in
-            switch route {
-            case .album(let browseId, let title):
-                AlbumView(browseId: browseId, title: title)
-            case .artist(let channelId, let title):
-                ArtistView(channelId: channelId, title: title)
-            case .playlist(let playlistId, let title):
-                PlaylistView(playlistId: playlistId, title: title)
-            }
-        }
-    }
-}
-
-extension View {
-    func carmenDestinations() -> some View { modifier(CarmenDestinations()) }
-}
-
-/// Playable tracks out of a mixed card row (home sections, search results).
-func playableTracks(_ cards: [MediaCard]) -> [Track] {
-    cards.compactMap { $0.kind == .song ? $0.track : nil }
-}
 
 // MARK: - State views
 
