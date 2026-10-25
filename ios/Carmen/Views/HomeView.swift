@@ -169,7 +169,11 @@ struct HomeView: View {
             .padding(12)
             .frame(minHeight: 120)
             .background(m3.surfaceContainerHigh, in: M3Shape.dialog)
-            .overlay(m3.outlineVariant.opacity(0.9), in: M3Shape.dialog.strokeBorder(lineWidth: 1))
+            .overlay {
+                M3Shape.dialog
+                    .strokeBorder(lineWidth: 1)
+                    .foregroundStyle(m3.outlineVariant.opacity(0.9))
+            }
             .frame(width: 320)
             .contentShape(M3Shape.dialog)
         }
