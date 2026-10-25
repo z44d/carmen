@@ -22,14 +22,9 @@ struct QueuePanel: View {
         player.queue.indices.contains(upcomingStart)
             ? player.queue[upcomingStart...] : player.queue[0..<0]
     }
-    /// The upcoming rows as an absolute range of queue indices — spelled as
-    /// `Range<Int>` explicitly: a bare `.indices` on the slice resolves
-    /// ambiguously against the SDK's RangeSet-returning `indices(where:)`.
-    private var upcomingRange: Range<Int> {
-        let queue = player.queue
-        return queue.indices.contains(upcomingStart)
-            ? upcomingStart..<queue.count : 0..<0
-    }
+    /// Exclusive end of the upcoming range (safe whenever a track is
+    /// playing: currentIndex < count, so upcomingStart <= count).
+    private var queueCount: Int { player.queue.count }
 
     var body: some View {
         VStack(spacing: 0) {
@@ -111,24 +106,27 @@ struct QueuePanel: View {
 
     private var upcomingList: some View {
         VStack(spacing: 0) {
-            ForEach(upcomingRange, id: \.self) { index in
-                let track = player.queue[index]
-
-                QueuePanelRow(track: track)
-                    .contentShape(Rectangle())
-                    .onTapGesture { player.jump(to: index) }
-                    // Drag to reorder: grab a row, drop it on another — the
-                    // indices are absolute so moveInQueue sees queue space.
-                    .draggable(index)
-                    .dropDestination(for: Int.self) { payloads, _ in
-                        guard let from = payloads.first, from != index,
-                            player.queue.indices.contains(from)
-                        else { return false }
-                        player.moveInQueue(from: IndexSet(integer: from), to: index)
-                        return true
-                    }
+            ForEach(upcomingStart..<queueCount, id: \.self) { index in
+                queueRow(index)
             }
         }
+    }
+
+    /// One upcoming row at an absolute queue index: tap jumps the playhead,
+    /// trailing ✕ removes, drag a row onto another to reorder.
+    @ViewBuilder
+    private func queueRow(_ index: Int) -> some View {
+        QueuePanelRow(track: player.queue[index])
+            .contentShape(Rectangle())
+            .onTapGesture { player.jump(to: index) }
+            .draggable(index)
+            .dropDestination(for: Int.self) { payloads, _ in
+                guard let from = payloads.first, from != index,
+                    player.queue.indices.contains(from)
+                else { return false }
+                player.moveInQueue(from: IndexSet(integer: from), to: index)
+                return true
+            }
     }
 }
 
