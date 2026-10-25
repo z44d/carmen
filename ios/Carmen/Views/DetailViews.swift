@@ -684,6 +684,126 @@ struct PlaylistView: View {
     }
 }
 
+/// A podcast show (`/podcasts/podcast/{playlistId}`): `DetailHero` header
+/// plus the episodes as playable rows — Android's podcast detail screen.
+struct PodcastView: View {
+    let playlistId: String
+    let title: String
+
+    @State private var detail: PodcastDetail?
+    @State private var errorMessage: String?
+
+    @Environment(\.m3) private var m3
+    @Environment(Player.self) private var player
+    @Environment(LibraryStore.self) private var library
+
+    private var shareLink: String { "https://carmen.z44d.com/?podcast=\(playlistId)" }
+
+    var body: some View {
+        content
+            .navigationTitle("")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                if let detail {
+                    ToolbarItem(placement: .topBarTrailing) {
+                        Menu {
+                            Button {
+                                player.play(detail.episodes)
+                            } label: {
+                                Label("Play All", systemImage: "play.fill")
+                            }
+                            ShareLink(item: shareLink) {
+                                Label("Share", systemImage: "square.and.arrow.up")
+                            }
+                        } label: {
+                            Image(systemName: "ellipsis")
+                                .font(.m3(20, weight: .semibold))
+                        }
+                    }
+                }
+            }
+            .task(id: playlistId) {
+                await load()
+            }
+    }
+
+    @ViewBuilder private var content: some View {
+        if let detail {
+            ScrollView {
+                VStack(alignment: .leading, spacing: 16) {
+                    DetailHero(
+                        title: detail.title,
+                        artworkURL: detail.artworkURL,
+                        placeholderSymbol: "mic",
+                        metaParts: metaParts(detail),
+                        tracks: detail.episodes
+                    ) {
+                        ShareLink(item: shareLink) {
+                            Image(systemName: "square.and.arrow.up")
+                                .font(.m3(18, weight: .medium))
+                                .frame(width: 40, height: 40)
+                                .foregroundStyle(m3.onSurfaceVariant)
+                                .contentShape(Circle())
+                        }
+                    }
+                    if let description = detail.description, !description.isEmpty {
+                        ExpandableText(text: description)
+                    }
+                    episodeList(show)
+                }
+                .padding(.bottom, 32)
+                .frame(maxWidth: .infinity)
+                .background(alignment: .top) { HeroWash() }
+            }
+            .background(m3.background)
+        } else if let errorMessage {
+            ScrollView {
+                M3ErrorState(message: errorMessage) {
+                    Task { await load() }
+                }
+            }
+        } else {
+            ScrollView {
+                ShimmerList(rows: 6)
+                    .padding(.top, 12)
+            }
+        }
+    }
+
+    /// Voids previewing with a load-in-flight that then replaces `detail`.
+    private func load() async {
+        errorMessage = nil
+        do {
+            detail = try await API(baseURL: SettingsStore.shared.apiBaseURL).podcast(playlistId)
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    /// “Author · 12 episodes” — show author and episode count.
+    private func metaParts(_ show: PodcastDetail) -> [String] {
+        var parts: [String] = []
+        if !show.author.isEmpty { parts.append(show.author) }
+        if !show.episodes.isEmpty {
+            parts.append(show.episodes.count == 1 ? "1 episode" : "\(show.episodes.count) episodes")
+        }
+        return parts
+    }
+
+    private func episodeList(_ show: PodcastDetail) -> some View {
+        LazyVStack(spacing: 0) {
+            ForEach(Array(show.episodes.enumerated()), id: \.offset) { pair in
+                ListRow(
+                    track: pair.element,
+                    isPlaying: player.current?.videoId == pair.element.videoId,
+                    onTap: { player.play(show.episodes, startAt: pair.offset) }
+                )
+                .padding(.horizontal, 8)
+            }
+        }
+    }
+}
+
 // MARK: - Shared hero wash
 
 /// Android's hero background: a wash of the primary container fading into

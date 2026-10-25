@@ -35,7 +35,9 @@ struct HomeView: View {
         ScrollView {
             VStack(alignment: .leading, spacing: 18) {
                 suggestedForYou
+                speedDial
                 keepListening
+                forgottenFavorites
                 remote
                 if !remoteLoading,
                     recentSnapshot.isEmpty,
@@ -268,6 +270,59 @@ struct HomeView: View {
         .pressScale(0.98)
     }
 
+    // MARK: Speed dial
+
+    /// Android SpeedDialSection: paged 3x3 grid of pinned tiles sitting on a
+    /// surfaceContainerLow rounded sheet, with expanding page dots underneath.
+    /// Carmen's stand-in for "pinned" is the on-device playlists (up to 23
+    /// tiles), with Android's ever-present "random" tile appended at the end.
+    @ViewBuilder private var speedDial: some View {
+        if !library.playlists.isEmpty {
+            SectionHeader(title: "Speed dial")
+            GeometryReader { proxy in
+                let tile = SpeedDialGrid.tileSize(in: proxy.size.width)
+                let tileCount = min(library.playlists.count, 23)
+                SpeedDialGrid(
+                    playlists: Array(library.playlists.prefix(23)),
+                    shufflePool: shufflePool,
+                    tile: tile,
+                    height: SpeedDialGrid.height(tile: tile, tileCount: tileCount)
+                )
+            }
+        }
+    }
+
+    // MARK: Forgotten favorites
+
+    /// Android ForgottenFavoritesSection: favorites that haven't been played
+    /// recently, in a snapping 4-row horizontal grid at 47.5% row width and
+    /// standard 72pt list rows.
+    private var forgottenFavoritesTracks: [Track] {
+        let recentIDs = Set(recentSnapshot.map(\.videoId))
+        var seen = Set<String>()
+        return library.favorites.filter { !recentIDs.contains($0.videoId) && seen.insert($0.videoId).inserted }
+    }
+
+    @ViewBuilder private var forgottenFavorites: some View {
+        if !forgottenFavoritesTracks.isEmpty {
+            SectionHeader(title: "Forgotten favorites")
+            GeometryReader { proxy in
+                let itemWidth = proxy.size.width * 0.475
+                let columns = [GridItem](repeating: GridItem(.fixed(M3Dim.listHeight), spacing: 0), count: 4)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHGrid(rows: columns, spacing: 0) {
+                        ForEach(Array(forgottenFavoritesTracks.prefix(24).enumerated()), id: \.element.id) { index, track in
+                            ForgottenFavoriteRow(track: track, context: forgottenFavoritesTracks)
+                                .frame(width: itemWidth)
+                        }
+                    }
+                    .padding(.horizontal, 16)
+                }
+            }
+            .frame(height: M3Dim.listHeight * 4)
+        }
+    }
+
     // MARK: Remote home sections
 
     @ViewBuilder private var remote: some View {
@@ -349,5 +404,240 @@ struct HomeView: View {
         guard !candidates.isEmpty else { return }
         player.shuffle = true
         player.play(candidates.shuffled())
+    }
+
+    /// Pool behind the speed dial's "random" tile — the same local feed the
+    /// FAB shuffles, so the tile mirrors Android's speed-dial random play.
+    private var shufflePool: [Track] {
+        var seen = Set<String>()
+        return (recentSnapshot + suggestionSnapshot).filter { seen.insert($0.videoId).inserted }
+    }
+}
+
+// MARK: - Speed dial grid (Android SpeedDialSection)
+
+/// One entry in the speed-dial tile set. Android pins songs, albums, artists
+/// and playlists; Carmen's pinned set is the on-device playlists plus the
+/// ever-present "random" tile.
+private enum SpeedDialEntry: Identifiable {
+    case playlist(LocalPlaylist)
+    case random
+
+    var id: String {
+        switch self {
+        case .playlist(let playlist): return playlist.id.uuidString
+        case .random: return "random"
+        }
+    }
+}
+
+/// Android's paged 3x3 tile grid: tiles on a surfaceContainerLow rounded
+/// sheet (outer 12 + inner 12 padding), expanding page dots underneath.
+private struct SpeedDialGrid: View {
+    @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
+
+    let playlists: [LocalPlaylist]
+    let shufflePool: [Track]
+    let tile: CGFloat
+    /// Whole-section height, computed by the caller so the wrapping
+    /// GeometryReader can't truncate the sheet.
+    let height: CGFloat
+
+    static let spacing: CGFloat = 10
+
+    /// Android: inner width (screen − 2×12 surface pad − 2×12 inner pad),
+    /// tiles = (inner − spacing×(cols−1)) / cols.
+    static func tileSize(in width: CGFloat) -> CGFloat {
+        (width - 48 - spacing * 2) / 3
+    }
+
+    /// grid + 24 surface padding, plus the dot row (12 spacer + 8) when there
+    /// is more than one page.
+    static func height(tile: CGFloat, tileCount: Int) -> CGFloat {
+        let pages = max(1, (tileCount + 1 + 8) / 9)
+        let rows = pages == 1 ? min(3, (tileCount + 1 + 2) / 3) : 3
+        let grid = tile * CGFloat(rows) + spacing * CGFloat(rows - 1)
+        var total = grid + 24
+        if pages > 1 { total += 20 }
+        return total
+    }
+
+    var body: some View {
+        let tiles = playlists.map(SpeedDialEntry.playlist) + [.random]
+        let pages = stride(from: 0, to: tiles.count, by: 9).map { Array(tiles[$0..<min($0 + 9, tiles.count)]) }
+        // pagers row height: 24 sheet padding, plus 12 gap + 8 dots when paged.
+        let pagerHeight = height - 24 - (pages.count > 1 ? 20 : 0)
+        return VStack(spacing: 12) {
+            TabView(selection: $page) {
+                ForEach(pages.indices, id: \.self) { pageIndex in
+                    let pageTiles = pages[pageIndex]
+                    let rows = max(1, Int(ceil(Double(pageTiles.count) / 3)))
+                    VStack(spacing: Self.spacing) {
+                        ForEach(0..<rows, id: \.self) { row in
+                            HStack(spacing: Self.spacing) {
+                                ForEach(0..<3, id: \.self) { column in
+                                    let index = row * 3 + column
+                                    if index < pageTiles.count {
+                                        dialTile(pageTiles[index])
+                                    } else {
+                                        Color.clear
+                                            .frame(width: tile, height: tile)
+                                    }
+                                }
+                            }
+                        }
+                    }
+                    .padding(.horizontal, 12)
+                    .frame(maxWidth: .infinity)
+                    .tag(pageIndex)
+                }
+            }
+            .tabViewStyle(.page(indexDisplayMode: .never))
+            .frame(height: pagerHeight)
+
+            if pages.count > 1 {
+                HStack(spacing: 8) {
+                    ForEach(pages.indices, id: \.self) { index in
+                        Capsule()
+                            .fill(index == page ? m3.primary : m3.surfaceContainerHighest)
+                            .frame(width: index == page ? 22 : 8, height: 8)
+                            .animation(.easeInOut(duration: 0.2), value: page)
+                    }
+                }
+            }
+        }
+        .padding(.vertical, 12)
+        .background(m3.surface, in: M3Shape.large)
+    }
+
+    @State private var page = 0
+
+    @ViewBuilder private func dialTile(_ entry: SpeedDialEntry) -> some View {
+        switch entry {
+        case .playlist(let playlist):
+            SpeedDialPlaylistTile(playlist: playlist, size: tile)
+        case .random:
+            Button {
+                guard let first = shufflePool.randomElement() else { return }
+                player.play(shufflePool, startAt: shufflePool.firstIndex(of: first) ?? 0)
+            } label: {
+                ZStack {
+                    Rectangle()
+                        .fill(m3.surfaceContainerHighest)
+                    Image(systemName: "shuffle")
+                        .font(.system(size: 22, weight: .medium))
+                        .foregroundStyle(m3.onSurfaceVariant)
+                }
+                .frame(width: tile, height: tile)
+                .clipShape(M3Shape.large)
+            }
+            .buttonStyle(.plain)
+            .pressScale(0.96)
+        }
+    }
+}
+
+/// One speed-dial tile: artwork full-bleed, a bottom-weighted label
+/// gradient (transparent → 34% → 78% black), the name in labelLarge white
+/// with a chevron (non-song tiles navigate) and a bookmark badge up top —
+/// Android SpeedDialGridItem, pinned variant.
+private struct SpeedDialPlaylistTile: View {
+    @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
+
+    let playlist: LocalPlaylist
+    let size: CGFloat
+
+    var body: some View {
+        Button {
+            if !playlist.tracks.isEmpty {
+                player.play(playlist.tracks)
+            }
+        } label: {
+            ZStack(alignment: .bottomLeading) {
+                ArtworkView(
+                    url: playlist.tracks.first?.artwork,
+                    fallbackURL: playlist.tracks.first?.artworkAlt,
+                    cornerRadius: 0
+                )
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.34), location: 0.55),
+                        .init(color: .black.opacity(0.78), location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+                .frame(height: min(86, size * 0.8))
+                .frame(maxHeight: .infinity, alignment: .bottom)
+
+                HStack(spacing: 4) {
+                    Text(playlist.name)
+                        .font(.m3LabelLarge.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(1)
+                    Spacer(minLength: 0)
+                    Image(systemName: "chevron.right")
+                        .font(.system(size: 14, weight: .semibold))
+                        .foregroundStyle(.white)
+                }
+                .padding(.leading, 10)
+                .padding(.trailing, 6)
+                .padding(.bottom, 8)
+
+                Image(systemName: "bookmark.fill")
+                    .font(.system(size: 16, weight: .medium))
+                    .foregroundStyle(.white)
+                    .padding(9)
+            }
+            .frame(width: size, height: size)
+            .clipShape(M3Shape.large)
+            .contentShape(M3Shape.large)
+        }
+        .buttonStyle(.plain)
+        .pressScale(0.96)
+        .disabled(playlist.tracks.isEmpty)
+    }
+}
+
+/// One forgotten-favorites list row — Android SongListItem at 47.5% width:
+/// 48pt artwork, title + artist, tap toggles/plays in the row's own context.
+private struct ForgottenFavoriteRow: View {
+    @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
+
+    let track: Track
+    let context: [Track]
+
+    var body: some View {
+        Button {
+            if player.current?.videoId == track.videoId {
+                player.togglePlayPause()
+            } else if let index = context.firstIndex(where: { $0.videoId == track.videoId }) {
+                player.play(context, startAt: index)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 8)
+                    .frame(width: 48, height: 48)
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title)
+                        .font(.m3BodyLarge.weight(.medium))
+                        .foregroundStyle(m3.onSurface)
+                        .lineLimit(1)
+                    Text(track.artistLine)
+                        .font(.m3BodyMedium)
+                        .foregroundStyle(m3.onSurfaceVariant)
+                        .lineLimit(1)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

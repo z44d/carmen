@@ -736,6 +736,7 @@ private struct TopResultCard: View {
         case .artist: return "person.crop.square"
         case .playlist, .station: return "music.note.list"
         case .album: return "square.stack"
+        case .podcast: return "mic"
         case .song, .unsupported: return "music.note"
         }
     }

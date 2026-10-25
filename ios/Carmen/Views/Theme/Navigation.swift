@@ -15,7 +15,10 @@ enum Route: Hashable {
     case album(browseId: String, title: String)
     case artist(channelId: String, title: String)
     case playlist(playlistId: String, title: String)
+    /// A podcast show — Android's `podcast/{browseId}` route.
+    case podcast(playlistId: String, title: String)
     /// A submitted search query — Android's `search_results/{query}` route.
+    case searchResults(query: String)
     case searchResults(query: String)
 
     init?(card: MediaCard) {
@@ -24,6 +27,7 @@ enum Route: Hashable {
         case .album: self = .album(browseId: card.targetId, title: card.title)
         case .artist: self = .artist(channelId: card.targetId, title: card.title)
         case .playlist: self = .playlist(playlistId: card.targetId, title: card.title)
+        case .podcast: self = .podcast(playlistId: card.targetId, title: card.title)
         case .song, .station, .unsupported: return nil
         }
     }
@@ -41,6 +45,8 @@ struct CarmenDestinations: ViewModifier {
                 ArtistView(channelId: channelId, title: title)
             case .playlist(let playlistId, let title):
                 PlaylistView(playlistId: playlistId, title: title)
+            case .podcast(let playlistId, let title):
+                PodcastView(playlistId: playlistId, title: title)
             case .searchResults(let query):
                 SearchResultsView(query: query)
             }

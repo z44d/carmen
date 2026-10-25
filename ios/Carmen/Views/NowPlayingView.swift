@@ -1,17 +1,21 @@
 //
 //  NowPlayingView.swift
-//  Carmen — the full player (Material 3 clone of the Android player screen).
+//  Carmen — the full player (Material 3 clone of the Android player
+//  screen, V4 default design).
 //
 //  Mounted by RootView as an overlay that slides up from the mini bar
-//  (`Player.expansion` drives the offset; dragging the header tracks the
-//  finger back down — that contract lives in RootView and must not change).
-//  Inside: the ambient blurred-cover backdrop washed with the artwork's own
-//  colour (adaptive accent), motion artwork that grows with the sheet,
-//  centered metadata, a capsule scrubber, transport with shuffle/repeat, and
-//  a bottom action bar (Lyrics / Queue / Related / Download) whose toggles
-//  swap the content area for a panel takeover — compact now-playing card +
-//  thin progress rail + the panel body, exactly like the web client's panel
-//  takeover, with dismiss one tap away.
+//  (`Player.expansion` drives the offset; dragging tracks the finger —
+//  that contract lives in RootView and must not change).
+//
+//  Anatomy copied from Android's `PlayerControlsContent` (V4): big square
+//  artwork (r16, swipe to skip), a SpaceBetween metadata row whose right
+//  side is the three 44pt chip actions (Share / Like / More), a standard
+//  Material slider with elapsed/total time labels, and the cinematic
+//  transport row — small shuffle + large previous chips flowing into an
+//  88pt play/pause (corner breathing 28↔44 with playback) and out the
+//  other side through next + repeat. Panels (Lyrics / Queue / Related)
+//  still take over the content area exactly like before; the collapse
+//  gesture lives in the metadata row and the artwork's vertical drag.
 //
 //  The player is always a dark surface: the content is re-themed with dark
 //  Material roles and evaluated as dark regardless of system appearance.
@@ -44,6 +48,7 @@ enum PlayerPanel: String, CaseIterable, Identifiable {
 struct NowPlayingView: View {
     @Environment(Player.self) private var player
     @Environment(\.m3) private var m3
+    @Environment(LibraryStore.self) private var library
 
     @State private var activePanel: PlayerPanel?
     @State private var scrubTime: Double = 0
@@ -79,8 +84,6 @@ struct NowPlayingView: View {
             NowPlayingBackground(track: track, tint: player.adaptiveColor)
 
             VStack(spacing: 0) {
-                header
-
                 if let panel = activePanel {
                     compactCard(for: track)
                     thinProgressBar
@@ -103,71 +106,21 @@ struct NowPlayingView: View {
         .animation(.spring(response: 0.35, dampingFraction: 0.85), value: activePanel)
     }
 
+    /// Android V4 column: thumbnail in the free space, then title/actions,
+    /// slider + times, transport, and a 30pt tail.
     private func playerBody(for track: Track) -> some View {
         VStack(spacing: 0) {
             artworkArea(for: track)
             metadata(for: track)
             scrubber
             transport
-            Spacer(minLength: 8)
+            Spacer(minLength: 30)
         }
-        .padding(.horizontal, 24)
     }
 
-    /// Grabber + eyebrow row — also the drag zone that collapses the player.
-    private var header: some View {
-        VStack(spacing: 6) {
-            Capsule()
-                .fill(m3.onSurfaceVariant.opacity(0.5))
-                .frame(width: 36, height: 5)
-            HStack {
-                Button {
-                    player.closePlayer()
-                } label: {
-                    Image(systemName: "chevron.down")
-                        .font(.footnote.weight(.semibold))
-                        .foregroundStyle(m3.onSurfaceVariant)
-                        .frame(width: 32, height: 32)
-                        .contentShape(Rectangle())
-                }
-                .buttonStyle(.plain)
-                .accessibilityLabel("Close Player")
-
-                Spacer()
-                Text("NOW PLAYING")
-                    .font(.m3LabelSmall)
-                    .tracking(1.2)
-                    .foregroundStyle(m3.onSurfaceVariant)
-                Spacer()
-
-                Color.clear.frame(width: 32, height: 32)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 8)
-        .padding(.bottom, 10)
-        .contentShape(Rectangle())
-        .gesture(
-            DragGesture(minimumDistance: 10)
-                .onChanged { value in
-                    // Track the finger — RootView's offset reads this live.
-                    let progress = 1 - value.translation.height / Self.dragRange
-                    player.expansion = max(0, min(1, progress))
-                }
-                .onEnded { value in
-                    if value.translation.height > 120 || value.predictedEndTranslation.height > 400 {
-                        player.closePlayer()
-                    } else {
-                        withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
-                            player.expansion = 1
-                        }
-                    }
-                }
-        )
-    }
-
-    /// Motion video when the track has it, the static cover otherwise — both
-    /// growing with the sheet so the player feels like it left the mini bar.
+    /// Motion video when the track has it, the static cover otherwise.
+    /// Square, r16 (Android's ThumbnailCornerRadius default), swipe left /
+    /// right skips tracks, vertical drag collapses the player.
     @ViewBuilder
     private func artworkArea(for track: Track) -> some View {
         let expansion = player.expansion
@@ -175,53 +128,128 @@ struct NowPlayingView: View {
             if let motionURL = player.motionArtworkURL {
                 MotionArtworkView(
                     urlString: motionURL,
-                    artworkID: "carmen.\(track.album?.id ?? track.videoId)",
+                    artworkID: "carmen." + (track.album?.id ?? track.videoId),
                     staticURL: track.artwork,
                     staticFallbackURL: track.artworkAlt
                 )
             } else {
-                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 12)
+                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 16)
             }
         }
         .aspectRatio(1, contentMode: .fit)
         .frame(maxWidth: .infinity)
-        .clipShape(M3Shape.card)
+        .clipShape(M3Shape.sheet)
         .shadow(color: m3.scrim.opacity(0.35), radius: 22, y: 12)
         .scaleEffect(0.5 + 0.5 * expansion)
         .opacity(0.35 + 0.65 * expansion)
         .frame(maxHeight: 330)
-        .padding(.bottom, 16)
+        .padding(.bottom, 24)
+        .gesture(skipSwipe)
+        .simultaneousGesture(collapseGesture)
     }
 
+    /// Android's swipe-thumbnail: flick left = next, right = previous.
+    private var skipSwipe: some Gesture {
+        DragGesture(minimumDistance: 40)
+            .onEnded { value in
+                if abs(value.translation.width) > abs(value.translation.height) {
+                    if value.translation.width < -60 {
+                        player.next()
+                    } else if value.translation.width > 60 {
+                        player.previous()
+                    }
+                }
+            }
+    }
+
+    /// Collapses the player on a downward drag, tracking the finger live.
+    private var collapseGesture: some Gesture {
+        DragGesture(minimumDistance: 24)
+            .onChanged { value in
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                let progress = 1 - value.translation.height / Self.dragRange
+                player.expansion = max(0, min(1, progress))
+            }
+            .onEnded { value in
+                guard abs(value.translation.height) > abs(value.translation.width) else { return }
+                if value.translation.height > 120 || value.predictedEndTranslation.height > 400 {
+                    player.closePlayer()
+                } else {
+                    withAnimation(.spring(response: 0.35, dampingFraction: 0.85)) {
+                        player.expansion = 1
+                    }
+                }
+            }
+    }
+
+    /// SpaceBetween row: title + artist on the left, the three 44pt chip
+    /// actions (Share / Like / More) on the right — `PlayerTopActions` V4.
     private func metadata(for track: Track) -> some View {
-        HStack(alignment: .center, spacing: 12) {
-            VStack(spacing: 4) {
+        let liked = library.isFavorite(track.videoId)
+        return HStack(spacing: 12) {
+            VStack(alignment: .leading, spacing: 2) {
                 HStack(spacing: 5) {
                     Text(track.title)
                         .font(.m3TitleLarge)
                         .foregroundStyle(m3.onSurface)
-                        .lineLimit(2)
+                        .lineLimit(1)
                         .minimumScaleFactor(0.8)
-                        .multilineTextAlignment(.center)
                     if track.isExplicit { ExplicitBadge() }
                 }
                 Text(track.artistLine)
-                    .font(.m3BodyLarge)
+                    .font(.m3TitleMedium)
                     .foregroundStyle(m3.onSurfaceVariant)
                     .lineLimit(1)
                     .minimumScaleFactor(0.85)
             }
-            .frame(maxWidth: .infinity, alignment: .center)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .gesture(collapseGesture)
 
-            FavoriteButton(track: track)
+            HStack(spacing: 10) {
+                ShareLink(item: "https://carmen.z44d.com/?song=" + track.videoId) {
+                    Image(systemName: "square.and.arrow.up")
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .background(m3.onSurface.opacity(0.12), in: M3Shape.dialog)
+                }
+                .foregroundStyle(m3.onSurface)
+                .accessibilityLabel("Share")
+
+                Button {
+                    library.toggleFavorite(track)
+                } label: {
+                    Image(systemName: liked ? "heart.fill" : "heart")
+                        .font(.system(size: 17, weight: .medium))
+                        .frame(width: 44, height: 44)
+                        .background(
+                            liked ? m3.error.opacity(0.25) : m3.onSurface.opacity(0.12),
+                            in: M3Shape.dialog
+                        )
+                        .foregroundStyle(liked ? m3.error : m3.onSurface)
+                }
+                .buttonStyle(.plain)
+                .accessibilityLabel(liked ? "Remove Favorite" : "Favorite")
+
+                Menu {
+                    TrackSheetMenu(track: track)
+                } label: {
+                    Image(systemName: "ellipsis")
+                        .font(.system(size: 17, weight: .semibold))
+                        .frame(width: 44, height: 44)
+                        .background(m3.onSurface.opacity(0.12), in: M3Shape.dialog)
+                }
+                .foregroundStyle(m3.onSurface)
+                .accessibilityLabel("More options")
+            }
         }
-        .padding(.bottom, 14)
+        .padding(.horizontal, 32)
+        .padding(.bottom, 12)
     }
 
-    /// Capsule scrubber: surface-highest track, primary fill up to the
-    /// playhead, circular thumb — seek on release.
+    /// Material standard slider: faint track, ink fill, round thumb —
+    /// seek commits on release (Android's Standard SliderStyle).
     private var scrubber: some View {
-        VStack(spacing: 6) {
+        VStack(spacing: 4) {
             GeometryReader { proxy in
                 let width = max(proxy.size.width, 1)
                 let total = max(player.duration, 1)
@@ -231,127 +259,157 @@ struct NowPlayingView: View {
 
                 ZStack(alignment: .leading) {
                     Capsule()
-                        .fill(m3.surfaceContainerHighest)
+                        .fill(m3.onSurface.opacity(0.24))
                     Capsule()
-                        .fill(m3.primary)
+                        .fill(m3.onSurface)
                         .frame(width: max(0, width * fraction))
                     Circle()
-                        .fill(m3.primary)
+                        .fill(m3.onSurface)
                         .frame(width: 14, height: 14)
                         .offset(x: max(0, min(width - 14, width * fraction - 7)))
                 }
                 .frame(height: 20)
                 .contentShape(Rectangle())
                 .opacity(playable ? 1 : 0.4)
-                .gesture(
-                    DragGesture(minimumDistance: 0)
-                        .onChanged { value in
-                            // No duration yet → the track is parked, not seekable.
-                            guard player.duration > 0 else { return }
-                            isScrubbing = true
-                            scrubTime = min(max(value.location.x / width, 0), 1) * player.duration
-                        }
-                        .onEnded { _ in
-                            guard isScrubbing else { return }
-                            isScrubbing = false
-                            player.seek(to: scrubTime)
-                        }
-                )
+                .gesture(scrubGesture(width: width))
             }
             .frame(height: 20)
 
             HStack {
                 Text(formatClock(isScrubbing ? scrubTime : player.currentTime))
                 Spacer()
-                Text(
-                    "-" + formatClock(
-                        max(player.duration - (isScrubbing ? scrubTime : player.currentTime), 0)
-                    )
-                )
+                Text(formatClock(max(player.duration, 0)))
             }
-            .font(.m3LabelSmall.monospacedDigit())
-            .foregroundStyle(m3.onSurfaceVariant)
+            .font(.m3LabelMedium.monospacedDigit())
+            .foregroundStyle(m3.onSurface)
         }
-        .padding(.bottom, 14)
+        .padding(.horizontal, 32)
+        .padding(.bottom, 12)
     }
 
-    /// shuffle · previous · play · next · repeat — evenly spaced, the play
-    /// circle the only filled surface.
+    private func scrubGesture(width: CGFloat) -> some Gesture {
+        DragGesture(minimumDistance: 0)
+            .onChanged { value in
+                // No duration yet → the track is parked, not seekable.
+                guard player.duration > 0 else { return }
+                isScrubbing = true
+                scrubTime = min(max(value.location.x / width, 0), 1) * player.duration
+            }
+            .onEnded { _ in
+                guard isScrubbing else { return }
+                isScrubbing = false
+                player.seek(to: scrubTime)
+            }
+    }
+
+    /// Android V4 transport: [shuffle small · prev large] ⇄ 88pt cinematic
+    /// play (corner breathes 28↔44 with playback) ⇄ [next large · repeat
+    /// small], all as tinted Surface chips.
     private var transport: some View {
         HStack(spacing: 0) {
-            Button {
-                player.shuffle.toggle()
-            } label: {
-                Image(systemName: "shuffle")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(M3IconButtonStyle(foreground: player.shuffle ? m3.primary : m3.onSurfaceVariant))
+            HStack(spacing: 12) {
+                controlChip(
+                    systemImage: "shuffle",
+                    size: 46, icon: 22, corner: 16,
+                    tint: player.shuffle ? m3.onSurface.opacity(0.2) : m3.onSurface.opacity(0.08)
+                ) {
+                    player.shuffle.toggle()
+                }
+                .foregroundStyle(player.shuffle ? m3.onSurface : m3.onSurface.opacity(0.55))
 
-            Button {
-                player.previous()
-            } label: {
-                Image(systemName: "backward.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(m3.onSurface)
-                    .frame(maxWidth: .infinity)
+                controlChip(
+                    systemImage: "backward.end.fill",
+                    size: 56, icon: 28, corner: 18
+                ) {
+                    player.previous()
+                }
+                .foregroundStyle(m3.onSurface)
+                .opacity(player.hasPrevious ? 1 : 0.4)
+                .disabled(!player.hasPrevious)
             }
-            .buttonStyle(M3IconButtonStyle(foreground: m3.onSurface))
-            .opacity(player.hasPrevious ? 1 : 0.35)
+            .frame(maxWidth: .infinity, alignment: .trailing)
 
             Button {
                 player.togglePlayPause()
             } label: {
                 ZStack {
-                    Circle()
-                        .fill(m3.primary)
                     if player.isBuffering {
                         ProgressView()
                             .controlSize(.large)
-                            .tint(m3.onPrimary)
+                            .tint(m3.background)
                     } else {
                         Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                            .font(.system(size: 26, weight: .semibold))
-                            .foregroundStyle(m3.onPrimary)
+                            .font(.system(size: 30, weight: .semibold))
+                            .foregroundStyle(m3.background)
                             .offset(x: player.isPlaying ? 0 : 2)  // optical centering
                     }
                 }
-                .frame(width: 64, height: 64)
-                .frame(maxWidth: .infinity)
+                .frame(width: 88, height: 88)
+                .background(
+                    m3.onSurface,
+                    in: RoundedRectangle(cornerRadius: player.isPlaying ? 28 : 44, style: .continuous)
+                )
+                .animation(.spring(response: 0.25, dampingFraction: 0.7), value: player.isPlaying)
             }
             .buttonStyle(.plain)
+            .padding(.horizontal, 20)
             .accessibilityLabel(player.isPlaying ? "Pause" : "Play")
 
-            Button {
-                player.next()
-            } label: {
-                Image(systemName: "forward.fill")
-                    .font(.system(size: 22, weight: .semibold))
-                    .foregroundStyle(m3.onSurface)
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(M3IconButtonStyle(foreground: m3.onSurface))
-            .opacity(player.hasNext ? 1 : 0.35)
-
-            Button {
-                switch player.repeatMode {
-                case .off: player.repeatMode = .all
-                case .all: player.repeatMode = .one
-                case .one: player.repeatMode = .off
+            HStack(spacing: 12) {
+                controlChip(
+                    systemImage: "forward.end.fill",
+                    size: 56, icon: 28, corner: 18
+                ) {
+                    player.next()
                 }
-            } label: {
-                Image(systemName: player.repeatMode == .one ? "repeat.1" : "repeat")
-                    .font(.system(size: 17, weight: .medium))
-                    .frame(maxWidth: .infinity)
-            }
-            .buttonStyle(
-                M3IconButtonStyle(
-                    foreground: player.repeatMode == .off ? m3.onSurfaceVariant : m3.primary
+                .foregroundStyle(m3.onSurface)
+                .opacity(player.hasNext ? 1 : 0.4)
+                .disabled(!player.hasNext)
+
+                controlChip(
+                    systemImage: player.repeatMode == .one ? "repeat.1" : "repeat",
+                    size: 46, icon: 22, corner: 16,
+                    tint: player.repeatMode == .off
+                        ? m3.onSurface.opacity(0.08)
+                        : m3.onSurface.opacity(0.2)
+                ) {
+                    switch player.repeatMode {
+                    case .off: player.repeatMode = .all
+                    case .all: player.repeatMode = .one
+                    case .one: player.repeatMode = .off
+                    }
+                }
+                .foregroundStyle(
+                    player.repeatMode == .off
+                        ? m3.onSurface.opacity(0.55) : m3.onSurface
                 )
-            )
-            .accessibilityLabel("Repeat \(player.repeatMode.label)")
+                .accessibilityLabel("Repeat " + player.repeatMode.label)
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
+        .padding(.horizontal, 32)
         .padding(.bottom, 14)
+    }
+
+    /// One tinted chip button of the transport row (Android's Surface chips).
+    private func controlChip(
+        systemImage: String,
+        size: CGFloat,
+        icon: CGFloat,
+        corner: CGFloat,
+        tint: Color? = nil,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            Image(systemName: systemImage)
+                .font(.system(size: icon, weight: .medium))
+                .frame(width: size, height: size)
+                .background(
+                    tint ?? m3.onSurface.opacity(0.15),
+                    in: RoundedRectangle(cornerRadius: corner, style: .continuous)
+                )
+        }
+        .buttonStyle(.plain)
     }
 
     /// Panel mode keeps the playhead one glance away: a 3pt progress rail

@@ -215,6 +215,7 @@ struct GridTile: View {
 
     @Environment(\.m3) private var m3
     @Environment(Player.self) private var player
+    @Environment(LibraryStore.self) private var library
 
     /// Display-only tile (categories, playlists built by hand).
     init(
@@ -297,6 +298,7 @@ struct GridTile: View {
         } else if let route = Route(card: card) {
             NavigationLink(value: route) { content }
                 .buttonStyle(.plain)
+                .contextMenu { podcastMenu(card) }
         } else {
             Button {
                 if card.kind == .station, !card.targetId.isEmpty {
@@ -304,6 +306,30 @@ struct GridTile: View {
                 }
             } label: { content }
                 .buttonStyle(.plain)
+                .contextMenu { podcastMenu(card) }
+        }
+    }
+
+    /// Long-press save for podcast cards — Android's "save podcast" menu on
+    /// search results feeds the Library's Podcasts tab.
+    @ViewBuilder private func podcastMenu(_ card: MediaCard) -> some View {
+        if card.kind == .podcast, !card.targetId.isEmpty {
+            let saved = library.isPodcastSaved(card.targetId)
+            Button {
+                library.togglePodcast(
+                    SavedPodcast(
+                        playlistId: card.targetId,
+                        title: card.title,
+                        author: card.subtitle,
+                        artwork: card.artwork ?? card.artworkAlt
+                    )
+                )
+            } label: {
+                Label(
+                    saved ? "Remove from Library" : "Save to Library",
+                    systemImage: saved ? "bookmark.slash.fill" : "bookmark"
+                )
+            }
         }
     }
 
@@ -315,6 +341,7 @@ struct GridTile: View {
             case .artist: return "person.crop.square"
             case .playlist, .station: return "music.note.list"
             case .album: return "square.stack"
+            case .podcast: return "mic"
             case .song, .unsupported: return "music.note"
             }
         }

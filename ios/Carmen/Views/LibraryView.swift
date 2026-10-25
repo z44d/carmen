@@ -30,6 +30,7 @@ struct LibraryView: View {
     @State private var deleteTarget: LocalPlaylist?
     @State private var openedPlaylist: LocalPlaylist?
     @State private var playlistMenuTarget: LocalPlaylist?
+    @State private var podcastMenuTarget: SavedPodcast?
     @State private var showRemoveAll = false
     @State private var favoritesSort: LibrarySongSort = .recent
     @State private var pushedRoute: LibraryRoutePush?
@@ -43,6 +44,7 @@ struct LibraryView: View {
         TabView(selection: tabSelection) {
             mixPage.tag(LibraryTab.mix.rawValue)
             playlistsPage.tag(LibraryTab.playlists.rawValue)
+            podcastsPage.tag(LibraryTab.podcasts.rawValue)
             songsPage.tag(LibraryTab.songs.rawValue)
             artistsPage.tag(LibraryTab.artists.rawValue)
             albumsPage.tag(LibraryTab.albums.rawValue)
@@ -264,6 +266,111 @@ struct LibraryView: View {
         .bottomSheetMenu(isPresented: playlistMenuBinding, title: playlistMenuTarget?.name) {
             if let playlist = playlistMenuTarget {
                 playlistMenu(playlist)
+            }
+        }
+    }
+
+    /// Android's LibraryPodcastsScreen: shows saved on-device (no account
+    /// sync here — subscribe via the search results' long-press menu), each
+    /// row taps through to the show's detail screen.
+    private var podcastsPage: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 8) {
+                SectionHeader(title: "Podcasts")
+
+                if library.podcasts.isEmpty {
+                    M3EmptyState(
+                        title: "No podcasts yet",
+                        hint: "Search with the Podcasts filter, then long-press a show and “Save to Library”.",
+                        systemImage: "mic"
+                    )
+                } else {
+                    VStack(spacing: 0) {
+                        ForEach(library.podcasts) { podcast in
+                            Button {
+                                pushedRoute = LibraryRoutePush(
+                                    route: .podcast(playlistId: podcast.playlistId, title: podcast.title)
+                                )
+                            } label: {
+                                HStack(spacing: 12) {
+                                    ArtworkView(url: podcast.artwork, cornerRadius: 8)
+                                        .frame(width: 56, height: 56)
+                                    VStack(alignment: .leading, spacing: 2) {
+                                        Text(podcast.title)
+                                            .font(.m3BodyLarge.weight(.medium))
+                                            .foregroundStyle(m3.onSurface)
+                                            .lineLimit(1)
+                                            .minimumScaleFactor(0.85)
+                                        Text(podcast.author)
+                                            .font(.m3BodyMedium)
+                                            .foregroundStyle(m3.onSurfaceVariant)
+                                            .lineLimit(1)
+                                    }
+                                    Spacer(minLength: 8)
+                                    Button {
+                                        podcastMenuTarget = podcast
+                                    } label: {
+                                        Image(systemName: "ellipsis")
+                                            .font(.m3BodyLarge)
+                                            .foregroundStyle(m3.onSurfaceVariant)
+                                            .frame(width: 36, height: 36)
+                                            .contentShape(Rectangle())
+                                    }
+                                    .buttonStyle(.plain)
+                                    .accessibilityLabel("Options for \(podcast.title)")
+                                }
+                                .padding(.horizontal, 16)
+                                .frame(minHeight: M3Dim.listHeight)
+                                .contentShape(Rectangle())
+                            }
+                            .buttonStyle(.plain)
+                            .pressScale(0.98)
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+            }
+            .padding(.top, 4)
+            .padding(.bottom, 24)
+        }
+        .bottomSheetMenu(isPresented: podcastMenuBinding, title: podcastMenuTarget?.title) {
+            if let podcast = podcastMenuTarget {
+                podcastMenu(podcast)
+            }
+        }
+    }
+
+    private var podcastMenuBinding: Binding<Bool> {
+        Binding(
+            get: { podcastMenuTarget != nil },
+            set: { presented in
+                if !presented { podcastMenuTarget = nil }
+            }
+        )
+    }
+
+    /// Play (the show's first episode) / Remove — Android's show menu.
+    @ViewBuilder
+    private func podcastMenu(_ podcast: SavedPodcast) -> some View {
+        VStack(alignment: .leading, spacing: 0) {
+            SheetMenuRow(title: "Play", systemImage: "play.fill") {
+                podcastMenuTarget = nil
+                Task {
+                    do {
+                        let detail = try await API(baseURL: SettingsStore.shared.apiBaseURL)
+                            .podcast(podcast.playlistId)
+                        if !detail.episodes.isEmpty {
+                            player.play(detail.episodes)
+                        }
+                    } catch {
+                        DebugLog.log("library", "podcast play failed: \(error.localizedDescription)")
+                    }
+                }
+            }
+            Divider()
+            SheetMenuRow(title: "Remove from Library", systemImage: "trash", tint: m3.error) {
+                podcastMenuTarget = nil
+                library.togglePodcast(podcast)
             }
         }
     }
@@ -671,6 +778,8 @@ struct LibraryView: View {
             ArtistView(channelId: channelId, title: title)
         case .playlist(let playlistId, let title):
             PlaylistView(playlistId: playlistId, title: title)
+        case .podcast(let playlistId, let title):
+            PodcastView(playlistId: playlistId, title: title)
         case .searchResults(let query):
             SearchResultsView(query: query)
         }
@@ -684,6 +793,7 @@ struct LibraryView: View {
 private enum LibraryTab: String, CaseIterable {
     case mix = "Mix"
     case playlists = "Playlists"
+    case podcasts = "Podcasts"
     case songs = "Songs"
     case artists = "Artists"
     case albums = "Albums"
@@ -693,6 +803,7 @@ private enum LibraryTab: String, CaseIterable {
         switch self {
         case .mix: return "waveform"
         case .playlists: return "music.note.list"
+        case .podcasts: return "mic"
         case .songs: return "music.note"
         case .artists: return "person"
         case .albums: return "square.stack"
