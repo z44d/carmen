@@ -749,7 +749,7 @@ struct PodcastView: View {
                     if let description = detail.description, !description.isEmpty {
                         ExpandableText(text: description)
                     }
-                    episodeList(show)
+                    episodeList(detail)
                 }
                 .padding(.bottom, 32)
                 .frame(maxWidth: .infinity)

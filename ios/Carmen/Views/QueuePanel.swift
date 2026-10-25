@@ -119,9 +119,11 @@ struct QueuePanel: View {
         QueuePanelRow(track: player.queue[index])
             .contentShape(Rectangle())
             .onTapGesture { player.jump(to: index) }
-            .draggable(index)
-            .dropDestination(for: Int.self) { payloads, _ in
-                guard let from = payloads.first, from != index,
+            // Int doesn't conform to Transferable — the row carries its queue
+            // index as a one-field string payload instead.
+            .draggable(String(index))
+            .dropDestination(for: String.self) { payloads, _ in
+                guard let text = payloads.first, let from = Int(text), from != index,
                     player.queue.indices.contains(from)
                 else { return false }
                 player.moveInQueue(from: IndexSet(integer: from), to: index)
