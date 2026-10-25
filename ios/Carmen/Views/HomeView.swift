@@ -1,13 +1,13 @@
 //
 //  HomeView.swift
-//  Carmen — the Home tab in Material 3 dress (Android HomeScreen parity).
+//  Carmen — the Home tab, Android HomeScreen parity.
 //
-//  Two local sections come first — the 10 most recently played songs plus up
+//  The same two local sections Android's Carmen home leads with: the 10
+//  most recently played songs ("Keep listening" wide resume cards) and up
 //  to 100 suggestions harvested from the related lists of everything the
-//  user plays — followed by the curated YouTube Music rows the Carmen
-//  server offers via /browsing/home. Remote rows are a bonus: if the
-//  server is unreachable they are simply omitted and the personal feed
-//  stays on screen.
+//  user plays ("Suggested for you" hero carousel). The curated YouTube
+//  Music rows the Carmen server offers via /browsing/home follow as media
+//  shelves; if the server is unreachable they are simply omitted.
 //
 
 import SwiftUI
@@ -31,16 +31,11 @@ struct HomeView: View {
 
     @State private var showSettings = false
 
-    private let columns = [
-        GridItem(.flexible(), spacing: 16),
-        GridItem(.flexible(), spacing: 16),
-    ]
-
     var body: some View {
         ScrollView {
-            VStack(alignment: .leading, spacing: 12) {
+            VStack(alignment: .leading, spacing: 18) {
+                suggestedForYou
                 keepListening
-                suggestions
                 remote
                 if !remoteLoading,
                     recentSnapshot.isEmpty,
@@ -83,64 +78,201 @@ struct HomeView: View {
 
     // MARK: Backdrop
 
-    /// Subtle tonal wash behind the feed — the seed's primary container
-    /// fading into the background, like Android's home surface.
+    /// Android's tonal wash behind the feed: a 430pt band from the top,
+    /// primary container (30%) → secondary container (14% at 42%) → clear.
     private var backdrop: some View {
-        LinearGradient(
-            colors: [m3.primaryContainer.opacity(0.35), m3.background],
-            startPoint: .top,
-            endPoint: .bottom
-        )
+        VStack(spacing: 0) {
+            LinearGradient(
+                stops: [
+                    .init(color: m3.primaryContainer.opacity(0.30), location: 0),
+                    .init(color: m3.secondaryContainer.opacity(0.14), location: 0.42),
+                    .init(color: .clear, location: 1.0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 430)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
         .ignoresSafeArea()
     }
 
     // MARK: Keep listening
 
+    /// The 10 most recent plays as Android's wide resume cards
+    /// (surfaceContainerHigh, outline border, 96pt thumb, filled play).
     @ViewBuilder private var keepListening: some View {
         if !recentSnapshot.isEmpty {
             SectionHeader(title: "Keep listening")
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 16) {
-                    ForEach(recentSnapshot) { track in
-                        GridTile(track: track, context: recentSnapshot)
+                HStack(spacing: 12) {
+                    ForEach(Array(recentSnapshot.enumerated()), id: \.element.id) { index, track in
+                        ResumeCard(track: track, activeIndex: index)
                     }
                 }
                 .padding(.horizontal, 16)
+                .scrollTargetLayout()
             }
+            .scrollTargetBehavior(.viewAligned)
         }
     }
 
-    // MARK: Carmen suggestions
+    /// One resume card: song info plus a 48pt filled play/pause button.
+    private func ResumeCard(track: Track, activeIndex: Int) -> some View {
+        let active = player.current?.videoId == track.videoId
+        return Button {
+            if active {
+                player.togglePlayPause()
+            } else {
+                player.play(recentSnapshot, startAt: activeIndex)
+            }
+        } label: {
+            HStack(spacing: 12) {
+                ZStack {
+                    ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 16)
+                        .frame(width: 96, height: 96)
+                    if active {
+                        Rectangle()
+                            .fill(m3.scrim.opacity(0.45))
+                        PlayingIndicator(tint: .white)
+                    }
+                }
 
-    @ViewBuilder private var suggestions: some View {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text(track.title)
+                        .font(.m3TitleMedium.weight(.semibold))
+                        .foregroundStyle(m3.onSurface)
+                        .lineLimit(2)
+                    Text(
+                        [track.artistLine, track.durationLabel ?? ""]
+                            .filter { !$0.isEmpty }
+                            .joined(separator: " • ")
+                    )
+                    .font(.m3BodyMedium)
+                    .foregroundStyle(m3.onSurfaceVariant)
+                    .lineLimit(2)
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+                ZStack {
+                    Circle()
+                        .fill(active ? m3.primary : m3.primaryContainer)
+                    Image(systemName: active && player.isPlaying ? "pause.fill" : "play.fill")
+                        .font(.system(size: 19, weight: .semibold))
+                        .foregroundStyle(active ? m3.onPrimary : m3.onPrimaryContainer)
+                }
+                .frame(width: 48, height: 48)
+            }
+            .padding(12)
+            .frame(minHeight: 120)
+            .background(m3.surfaceContainerHigh, in: M3Shape.dialog)
+            .overlay(m3.outlineVariant.opacity(0.9), in: M3Shape.dialog.strokeBorder(lineWidth: 1))
+            .frame(width: 320)
+            .contentShape(M3Shape.dialog)
+        }
+        .buttonStyle(.plain)
+        .pressScale(0.98)
+    }
+
+    // MARK: Suggested for you
+
+    /// Android's CARD quick-picks: a full-bleed artwork hero carousel with
+    /// the song title painted over the scrim — not a grid of tiles.
+    @ViewBuilder private var suggestedForYou: some View {
         if !suggestionSnapshot.isEmpty {
-            SectionHeader(title: "Carmen suggestions", menuItems: {
+            SectionHeader(title: "Suggested for you", menuItems: {
                 Button("Reshuffle") {
                     library.reshuffleSuggestions()
                     snapshot()
                 }
             })
-            LazyVGrid(columns: columns, spacing: 20) {
-                ForEach(
-                    Array(suggestionSnapshot.prefix(visibleSuggestions).enumerated()),
-                    id: \.offset
-                ) { index, track in
-                    GridTile(track: track, context: suggestionContext(for: track))
-                        .onAppear {
-                            // Prefetch the next page before the user hits it.
-                            if index >= visibleSuggestions - 6 { visibleSuggestions += 12 }
+            GeometryReader { proxy in
+                let cardWidth = min(max(proxy.size.width - 48, 232), 440)
+                ScrollView(.horizontal, showsIndicators: false) {
+                    HStack(spacing: 10) {
+                        ForEach(
+                            Array(suggestionSnapshot.prefix(visibleSuggestions).enumerated()),
+                            id: \.element.id
+                        ) { index, track in
+                            HeroCard(track: track)
+                                .frame(width: cardWidth)
+                                .onAppear {
+                                    // Prefetch the next page before the user hits it.
+                                    if index >= visibleSuggestions - 6 { visibleSuggestions += 12 }
+                                }
                         }
+                    }
+                    .padding(.horizontal, 16)
+                    .scrollTargetLayout()
+                }
+                .scrollTargetBehavior(.viewAligned)
+            }
+            .frame(height: 332)
+        }
+    }
+
+    /// One hero card: artwork full-bleed under a bottom-weighted scrim, the
+    /// title in white over it, and a now-playing pill in the top corner.
+    private func HeroCard(track: Track) -> some View {
+        let active = player.current?.videoId == track.videoId
+        return Button {
+            if active {
+                player.togglePlayPause()
+            } else {
+                player.play(suggestionContext(for: track), startAt: 0)
+            }
+        } label: {
+            ZStack(alignment: .bottomLeading) {
+                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 28)
+
+                LinearGradient(
+                    stops: [
+                        .init(color: .clear, location: 0),
+                        .init(color: .black.opacity(0.08), location: 0.48),
+                        .init(color: .black.opacity(0.84), location: 1.0),
+                    ],
+                    startPoint: .top,
+                    endPoint: .bottom
+                )
+
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(track.title)
+                        .font(.m3TitleLarge.weight(.semibold))
+                        .foregroundStyle(.white)
+                        .lineLimit(2)
+                    Text(track.artistLine)
+                        .font(.m3BodyLarge)
+                        .foregroundStyle(.white.opacity(0.78))
+                        .lineLimit(1)
+                }
+                .padding(20)
+            }
+            .overlay(alignment: .topTrailing) {
+                if active {
+                    ZStack {
+                        Circle()
+                            .fill(m3.primary)
+                        Image(systemName: "speaker.wave.2.fill")
+                            .font(.system(size: 15, weight: .semibold))
+                            .foregroundStyle(m3.onPrimary)
+                    }
+                    .frame(width: 36, height: 36)
+                    .padding(14)
                 }
             }
-            .padding(.horizontal, 16)
+            .clipShape(M3Shape.dialog)
+            .contentShape(M3Shape.dialog)
         }
+        .buttonStyle(.plain)
+        .pressScale(0.98)
     }
 
     // MARK: Remote home sections
 
     @ViewBuilder private var remote: some View {
         if remoteLoading, remoteSections.isEmpty {
-            // First load: skeleton shaped like the grid above while the
+            // First load: skeleton shaped like the shelves above while the
             // curated rows arrive.
             ShimmerGrid(items: 4, columns: 2)
                 .padding(.horizontal, 16)
@@ -162,7 +294,7 @@ struct HomeView: View {
                 action: playAll
             )
             ScrollView(.horizontal, showsIndicators: false) {
-                HStack(alignment: .top, spacing: 16) {
+                HStack(alignment: .top, spacing: 12) {
                     ForEach(section.contents) { card in
                         GridTile(card: card, siblings: section.contents)
                     }

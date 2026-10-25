@@ -49,7 +49,7 @@ struct LibraryView: View {
             downloadsPage.tag(LibraryTab.downloads.rawValue)
         }
         .tabViewStyle(.page(indexDisplayMode: .never))
-        .background { m3.background.ignoresSafeArea() }
+        .background { libraryBackdrop.ignoresSafeArea() }
         .toolbar(.hidden, for: .navigationBar)
         .safeAreaInset(edge: .top, spacing: 0) { header }
         // GridTile's label is a Button, so it can't nest inside a
@@ -73,6 +73,27 @@ struct LibraryView: View {
             }
             Button("Cancel", role: .cancel) { newName = "" }
         }
+    }
+
+    // MARK: - Backdrop
+
+    /// Same 430pt tonal band Android's LibraryScreen paints under the header:
+    /// primary container (30%) → secondary container (14% at 42%) → clear.
+    private var libraryBackdrop: some View {
+        VStack(spacing: 0) {
+            LinearGradient(
+                stops: [
+                    .init(color: m3.primaryContainer.opacity(0.30), location: 0),
+                    .init(color: m3.secondaryContainer.opacity(0.14), location: 0.42),
+                    .init(color: .clear, location: 1.0),
+                ],
+                startPoint: .top,
+                endPoint: .bottom
+            )
+            .frame(height: 430)
+            Spacer(minLength: 0)
+        }
+        .frame(maxWidth: .infinity)
     }
 
     // MARK: - Tab plumbing

@@ -321,6 +321,8 @@ struct GridTile: View {
         return isCircular ? "person.crop.square" : "music.note"
     }
 
+    /// Android GridItem metrics: art → 6pt gap → one-line bold bodyLarge
+    /// title → subtitle line carrying the badges, in `secondary` ink.
     private var content: some View {
         VStack(alignment: .leading, spacing: 6) {
             ZStack(alignment: .bottomTrailing) {
@@ -347,20 +349,21 @@ struct GridTile: View {
                 }
             }
 
-            HStack(alignment: .top, spacing: 4) {
-                Text(title)
-                    .font(.m3BodyMedium.weight(.semibold))
-                    .foregroundStyle(m3.onSurface)
-                    .lineLimit(2)
-                    .multilineTextAlignment(.leading)
-                    .frame(maxWidth: .infinity, alignment: .leading)
+            Text(title)
+                .font(.m3BodyLarge.weight(.bold))
+                .foregroundStyle(m3.onSurface)
+                .lineLimit(1)
+                .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, alignment: .leading)
+
+            HStack(spacing: 4) {
                 if isExplicit { ExplicitBadge() }
-            }
-            if !subtitle.isEmpty {
-                Text(subtitle)
-                    .font(.m3BodySmall)
-                    .foregroundStyle(m3.onSurfaceVariant)
-                    .lineLimit(1)
+                if !subtitle.isEmpty {
+                    Text(subtitle)
+                        .font(.m3BodyMedium)
+                        .foregroundStyle(m3.secondary)
+                        .lineLimit(1)
+                }
             }
         }
         .frame(width: width, alignment: .leading)
@@ -396,9 +399,11 @@ struct SectionHeader: View {
     }
 
     var body: some View {
-        HStack(spacing: 4) {
+        // Android HomeSectionHeader: min height 64, vertical 8, title-large
+        // semibold on one line.
+        HStack(spacing: 12) {
             Text(title)
-                .font(.m3TitleLarge)
+                .font(.m3TitleLarge.weight(.semibold))
                 .foregroundStyle(m3.onSurface)
                 .lineLimit(1)
             Spacer(minLength: 8)
@@ -419,6 +424,7 @@ struct SectionHeader: View {
             }
         }
         .padding(.horizontal, 16)
-        .padding(.vertical, 6)
+        .padding(.vertical, 8)
+        .frame(minHeight: 64)
     }
 }
