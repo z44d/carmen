@@ -19,7 +19,6 @@ enum Route: Hashable {
     case podcast(playlistId: String, title: String)
     /// A submitted search query — Android's `search_results/{query}` route.
     case searchResults(query: String)
-    case searchResults(query: String)
 
     init?(card: MediaCard) {
         guard !card.targetId.isEmpty else { return nil }
