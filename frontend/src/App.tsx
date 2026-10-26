@@ -5,6 +5,7 @@ import Layout from './components/Layout';
 import ArtistPage from './pages/ArtistPage';
 import CollectionPage from './pages/CollectionPage';
 import HomePage from './pages/HomePage';
+import IntroPage from './pages/intro/IntroPage';
 import LibraryPage from './pages/LibraryPage';
 import ManageDownloadsPage from './pages/ManageDownloadsPage';
 import QueuePage from './pages/QueuePage';
@@ -83,6 +84,10 @@ export default function App() {
               than this build (no-op in the browser). */}
           <UpdateDialog />
           <Routes>
+            {/* Landing page — deliberately outside <Layout/>: no player
+                shell, no app navigation, its own scroller. Shared as the
+                "get Carmen" link (`#/intro`). */}
+            <Route path="intro" element={<IntroPage />} />
             <Route element={<Layout />}>
               <Route index element={<HomePage />} />
               <Route path="search" element={<SearchPage />} />
