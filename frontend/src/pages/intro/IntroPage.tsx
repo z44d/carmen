@@ -2,9 +2,9 @@ import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 
-import cinematicScreenshot from '../../../../screenshots/cinematic-mode.png';
-import webClientScreenshot from '../../../../screenshots/web-client.png';
-import portraitScreenshot from '../../../../screenshots/portrait-view.png';
+import cinematicScreenshot from '../../../../screenshots/cinematic-mode.webp';
+import webClientScreenshot from '../../../../screenshots/web-client.webp';
+import portraitScreenshot from '../../../../screenshots/portrait-view.webp';
 import androidHomeScreenshot from '../../../../screenshots/android-client-homepage.jpg';
 import androidLyricsScreenshot from '../../../../screenshots/android-client-player-lyrics.jpg';
 import menuBarScreenshot from '../../../../screenshots/media-session-lyrics-in-menu-bar.png';
