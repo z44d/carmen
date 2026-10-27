@@ -91,6 +91,64 @@ def _chat_id() -> int | str:
 # for it runs, so a burst of range requests cannot stack up yt-dlp passes.
 _play_ensures: set[str] = set()
 
+# Full-body writes still in flight: video id -> [Event, refcount].  A relay
+# tee or a Telegram mirror announces itself while it fills the file, and the
+# background caching task waits on that instead of fetching the same song a
+# second time.  Two writers finishing seconds apart is what used to leave a
+# `.m4a` and a byte-identical `.mp4` behind for one video id.
+_body_writes: dict[str, list] = {}
+
+# How long the background task waits for such a write before it assumes the
+# relay was abandoned and downloads the song itself.  Exceeding it only
+# costs a second fetch — the writers still de-duplicate on disk (first one
+# to finish wins), so the cache never ends up with two copies of one song.
+_BODY_WRITE_WAIT = 300
+
+
+def _begin_body_write(vid_id: str) -> None:
+    """Announce that a full-body write of *vid_id* into the cache started."""
+    entry = _body_writes.get(vid_id)
+    if entry is None:
+        entry = _body_writes[vid_id] = [asyncio.Event(), 0]
+    entry[1] += 1
+
+
+def _end_body_write(vid_id: str) -> None:
+    """Announce that a full-body write of *vid_id* finished (or was dropped)."""
+    entry = _body_writes.get(vid_id)
+    if entry is None:
+        return
+    entry[1] -= 1
+    if entry[1] <= 0:
+        _body_writes.pop(vid_id, None)
+        entry[0].set()
+
+
+async def _await_body_write(vid_id: str) -> None:
+    """Wait until no full-body cache write for *vid_id* is running any more.
+
+    Returns at once when nothing is in flight.  Bounded, so a stuck relay
+    can only delay the background download — never hang it.
+    """
+    entry = _body_writes.get(vid_id)
+    if entry is None:
+        return
+    try:
+        await asyncio.wait_for(entry[0].wait(), timeout=_BODY_WRITE_WAIT)
+    except asyncio.TimeoutError:
+        log.debug("Timed out waiting for the cache write of %s", vid_id)
+
+
+def _spawn_play_ensure(vid_id: str) -> None:
+    """Start the background "cache this play" task.  No-op without Telegram.
+
+    Called when a play is answered from a tier that fills the disk cache in
+    the background (relay tee / Telegram mirror): the task registers its
+    write *before* this runs, so the task waits for it instead of racing it.
+    """
+    if state.tg_client and CHAT_ID:
+        asyncio.create_task(_ensure_tg_copy_for_play(vid_id))
+
 
 async def _get_tg_msg_id(vid_id: str) -> int | None:
     """Return the Telegram message ID for a cached audio, or None."""
@@ -275,10 +333,14 @@ async def _ensure_tg_copy_for_play(vid_id: str) -> None:
     brings the file down in the background (once per song) and hands it to
     :func:`_ensure_tg_copy`, which uploads it or verifies the copy that is
     already mapped.  The in-flight set deduplicates the range-request burst
-    a single play fires.  A mapped copy that already has a recorded size is
-    left to the serve path, which re-checks it against the live message
-    before answering — this task only fills the gaps (no mapping, or a
-    mapping uploaded before sizes were tracked).
+    a single play fires.  When a relay or a Telegram mirror is already
+    writing the very same song to disk, the task waits for that write
+    instead of fetching the track a second time in parallel — that race is
+    what used to leave two files behind for one video id.  A mapped copy
+    that already has a recorded size is left to the serve path, which
+    re-checks it against the live message before answering — this task only
+    fills the gaps (no mapping, or a mapping uploaded before sizes were
+    tracked).
     """
     if not state.tg_client or not CHAT_ID or vid_id in _play_ensures:
         return
@@ -290,6 +352,12 @@ async def _ensure_tg_copy_for_play(vid_id: str) -> None:
             # re-verifies it on the way out; nothing to do here.
             return
         path = find_cached_audio(vid_id)
+        if path is None:
+            # The play is being written to disk right now (relay tee or
+            # Telegram mirror) — wait for it instead of downloading the very
+            # same song a second time in parallel.
+            await _await_body_write(vid_id)
+            path = find_cached_audio(vid_id)
         if path is None:
             loop = asyncio.get_running_loop()
             try:
@@ -409,6 +477,10 @@ async def _tg_media_response(
             tmp_path = AUDIO_CACHE_DIR / f"{vid_id}.{uuid.uuid4().hex}.tg.part"
         except OSError:
             tmp_path = None  # mirror is a bonus — the stream must still run
+    if tmp_path is not None:
+        # Tell the background caching task a full copy is on its way, so it
+        # waits for this mirror instead of downloading the song again.
+        _begin_body_write(vid_id)
 
     async def pump():
         skip = start % _TG_CHUNK  # bytes to drop from the first chunk
@@ -441,32 +513,45 @@ async def _tg_media_response(
             # turned into an error status any more — log and stop cleanly.
             log.warning("Telegram stream broke for %s (msg %s): %s", vid_id, msg_id, exc)
         finally:
-            if tee is not None:
-                try:
-                    tee.flush()
-                    tee.close()
-                except OSError:
-                    tee_ok = False
-                if (
-                    tee_ok
-                    and written == total
-                    and tmp_path is not None
-                    # A background download may be racing for the same final
-                    # path — let it win instead of interleaving two writers
-                    # on one file.  (It converges: the audit either uploads
-                    # or verifies the copy either way.)
-                    and vid_id not in _play_ensures
-                ):
-                    final = AUDIO_CACHE_DIR / f"{vid_id}.m4a"
+            try:
+                if tee is not None:
                     try:
-                        os.replace(tmp_path, final)
-                        _prune_audio_cache()
-                        log.info("Mirrored %s from Telegram into the disk cache", vid_id)
-                    except OSError as exc:
-                        log.warning("Could not mirror %s from Telegram: %s", vid_id, exc)
+                        tee.flush()
+                        tee.close()
+                    except OSError:
+                        tee_ok = False
+                    if tee_ok and written == total and tmp_path is not None:
+                        final = AUDIO_CACHE_DIR / f"{vid_id}.m4a"
+                        if find_cached_audio(vid_id) is not None:
+                            # Another writer (relay tee, background download)
+                            # finished this song while we streamed it — keep
+                            # its file instead of leaving two copies of one
+                            # track in the cache.
+                            tmp_path.unlink(missing_ok=True)
+                            log.debug(
+                                "Discarded a duplicate Telegram mirror of %s",
+                                vid_id,
+                            )
+                        else:
+                            try:
+                                os.replace(tmp_path, final)
+                                _prune_audio_cache()
+                                log.info(
+                                    "Mirrored %s from Telegram into the disk cache",
+                                    vid_id,
+                                )
+                            except OSError as exc:
+                                log.warning(
+                                    "Could not mirror %s from Telegram: %s",
+                                    vid_id,
+                                    exc,
+                                )
+                                tmp_path.unlink(missing_ok=True)
+                    elif tmp_path is not None:
                         tmp_path.unlink(missing_ok=True)
-                elif tmp_path is not None:
-                    tmp_path.unlink(missing_ok=True)
+            finally:
+                if tmp_path is not None:
+                    _end_body_write(vid_id)
 
     return StreamingResponse(pump(), status_code=status, headers=headers, media_type=media_type)
 
@@ -649,6 +734,10 @@ async def _proxy_audio(
         AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         tmp_path = AUDIO_CACHE_DIR / f"{vid_id}.{uuid.uuid4().hex}.part"
         tee_path = AUDIO_CACHE_DIR / f"{vid_id}.m4a"
+        # Announce the write before returning: the background caching task is
+        # spawned as soon as this response goes out and must wait for these
+        # bytes instead of downloading the same song in parallel.
+        _begin_body_write(vid_id)
 
     written = 0
 
@@ -678,28 +767,56 @@ async def _proxy_audio(
                 written += len(chunk)
                 yield chunk
         finally:
-            if handle is not None:
-                try:
-                    handle.flush()
-                    handle.close()
-                except (OSError, ValueError):
-                    tee_ok = False
-                expected = int(upstream.headers.get("content-length") or 0)
-                # `written` may be short when the client asked for a mid-file
-                # offset, so completeness is measured against what reached the
-                # tee (the full upstream body) instead.
-                if tee_ok and expected and tee_size == expected and tmp_path and tee_path:
-                    os.replace(tmp_path, tee_path)
-                    _prune_audio_cache()
-                    # Background: the relay only ever runs when the disk
-                    # cache was cold — once the file is complete, give the
-                    # Telegram cache its copy too.
-                    asyncio.create_task(_ensure_tg_copy(vid_id, tee_path))
-                    log.info(
-                        "Cached streamed audio for %s (%d bytes)", vid_id, tee_size
-                    )
-                elif tmp_path:
-                    tmp_path.unlink(missing_ok=True)
+            try:
+                if handle is not None:
+                    try:
+                        handle.flush()
+                        handle.close()
+                    except (OSError, ValueError):
+                        tee_ok = False
+                    expected = int(upstream.headers.get("content-length") or 0)
+                    # `written` may be short when the client asked for a mid-file
+                    # offset, so completeness is measured against what reached the
+                    # tee (the full upstream body) instead.
+                    if (
+                        tee_ok
+                        and expected
+                        and tee_size == expected
+                        and tmp_path
+                        and tee_path
+                    ):
+                        if find_cached_audio(vid_id) is not None:
+                            # Another writer finished this song while we
+                            # streamed it — keep its file instead of leaving
+                            # two copies of one track in the cache.
+                            tmp_path.unlink(missing_ok=True)
+                            log.debug(
+                                "Discarded a duplicate relay tee for %s", vid_id
+                            )
+                        else:
+                            try:
+                                os.replace(tmp_path, tee_path)
+                            except OSError as exc:
+                                log.warning(
+                                    "Could not cache the relay of %s: %s", vid_id, exc
+                                )
+                                tmp_path.unlink(missing_ok=True)
+                            else:
+                                _prune_audio_cache()
+                                # Background: the relay only ever runs when the disk
+                                # cache was cold — once the file is complete, give the
+                                # Telegram cache its copy too.
+                                asyncio.create_task(_ensure_tg_copy(vid_id, tee_path))
+                                log.info(
+                                    "Cached streamed audio for %s (%d bytes)",
+                                    vid_id,
+                                    tee_size,
+                                )
+                    elif tmp_path:
+                        tmp_path.unlink(missing_ok=True)
+            finally:
+                if tmp_path is not None:
+                    _end_body_write(vid_id)
             await upstream.aclose()
             await client.aclose()
 
@@ -801,12 +918,11 @@ async def stream_audio(
             debuglog.tier(vidId, "disk-cache", started, _size_detail(cached), log)
             return response
 
-    # Every play counts: a song that is skipped away never completes a
-    # relay pass, so cache it in the background — downloads are deduped per
-    # video, and a mapped copy whose size was recorded is trusted without
-    # touching the network.  No-op without a configured Telegram client.
-    if state.tg_client and CHAT_ID:
-        asyncio.create_task(_ensure_tg_copy_for_play(vidId))
+    # Every play counts: a song that is skipped away never completes a relay
+    # pass, so it is cached in the background.  The task is spawned once the
+    # tier that answers is known (below), *after* that tier announced its own
+    # write — otherwise the download and the write would run in parallel and
+    # store the same song twice.  No-op without a configured Telegram client.
 
     # 2) Telegram channel — the `vids` hash maps this id to a message id
     if state.tg_client and CHAT_ID:
@@ -830,6 +946,7 @@ async def stream_audio(
                     debuglog.tier(
                         vidId, "telegram", started, f"msg {tg_msg_id}", log
                     )
+                    _spawn_play_ensure(vidId)
                     return tg_response
                 # Unusable mapping — `_tg_media_response` already forgot it;
                 # the relay below answers with the good bytes.
@@ -863,6 +980,7 @@ async def stream_audio(
             debuglog.tier(
                 vidId, "relay", started, f"client {target.client or 'default'}", log
             )
+            _spawn_play_ensure(vidId)
             return response
         except _UpstreamRejected as exc:
             log.warning(

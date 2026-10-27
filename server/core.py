@@ -1327,6 +1327,25 @@ def find_cached_audio(video_id: str) -> Path | None:
     return None
 
 
+def cached_audio_files(video_id: str) -> list[Path]:
+    """Every finished copy of *video_id* sitting in the audio cache.
+
+    A song normally has exactly one.  More than one means a second writer
+    (the relay tee, the Telegram mirror, a concurrent download) finished
+    while the first was still running — see :func:`download_audio`, which
+    drops its own copy when it finds one already there.
+    """
+    copies: list[Path] = []
+    for suffix in AUDIO_SUFFIXES:
+        candidate = AUDIO_CACHE_DIR / f"{video_id}{suffix}"
+        try:
+            if candidate.is_file() and candidate.stat().st_size:
+                copies.append(candidate)
+        except OSError:
+            continue
+    return copies
+
+
 def audio_cache_bytes() -> int:
     """Total bytes currently occupied by the audio cache."""
     total = 0
@@ -1694,6 +1713,24 @@ def download_audio(video_id: str) -> str:
             raise last_error or ValueError(
                 f"yt-dlp did not produce an audio file for {video_id}"
             )
+
+        # One file per video id: while yt-dlp ran, a relay tee or a Telegram
+        # mirror may have stored the same track (that race is what used to
+        # leave a `.m4a` and a byte-identical `.mp4` behind for one song).
+        # The copy that landed first is the cache — drop ours and serve that.
+        others = [p for p in cached_audio_files(video_id) if p != produced]
+        if others:
+            try:
+                produced.unlink(missing_ok=True)
+            except OSError:
+                others = []  # could not drop ours — keep both rather than lose one
+            if others:
+                produced = others[0]
+                log.debug(
+                    "Kept the cache copy of %s that already existed: %s",
+                    video_id,
+                    produced.name,
+                )
 
         _prune_audio_cache()
 
