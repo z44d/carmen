@@ -1279,9 +1279,10 @@ AUDIO_CACHE_PRUNE_INTERVAL = 300  # seconds between janitor passes
 AUDIO_SUFFIXES = (".m4a", ".mp4", ".webm", ".ogg", ".opus")
 
 streaming_options = {
-    # No browser cookie jar: decrypting Chrome's cookie store costs 1-3 seconds
-    # on *every* yt-dlp attempt (it shells out to the OS keychain), a headless
-    # server has no browser anyway, and playback does not need those cookies.
+    # Chrome's cookie jar is read on every yt-dlp pass (decrypting the store
+    # costs a moment on a headless box) — kept on purpose: an authenticated
+    # session draws far fewer "Sign in to confirm you're not a bot" refusals
+    # from the CDN than a bare datacenter IP.
     "quiet": True,
     "cookiesfrombrowser": ("chrome", "Default"),
     "no_warnings": True,
@@ -1365,10 +1366,31 @@ def _prune_audio_cache():
     """Keep the on-disk audio cache within :data:`AUDIO_CACHE_MAX_BYTES`.
 
     Evicts least-recently-used files first (mtime is bumped on every cache
-    hit, see :func:`find_cached_audio`).  Called after each completed
-    download and periodically by the janitor task in ``__main__.py``.
+    hit, see :func:`find_cached_audio`).  Also sweeps the partial files a
+    killed process leaves behind (``.part``/``.ytdl``): a crash or restart
+    mid-download skips every ``finally`` and those halves used to sit in the
+    directory forever, where they read as duplicate songs in ``ls``.  The
+    check is per *write*, not per file age: a live partial is rewritten
+    chunk by chunk, so its mtime stays fresh even on a slow stream — one
+    hour of silence means nothing is writing it anymore.
+
+    Called after each completed download and periodically by the janitor
+    task in ``__main__.py``.
     """
     try:
+        abandoned = time.time() - 3600
+        for stale in AUDIO_CACHE_DIR.glob("*.part*"):
+            try:
+                if stale.stat().st_mtime < abandoned:
+                    stale.unlink(missing_ok=True)
+            except OSError:
+                continue
+        for stale in AUDIO_CACHE_DIR.glob("*.ytdl"):
+            try:
+                if stale.stat().st_mtime < abandoned:
+                    stale.unlink(missing_ok=True)
+            except OSError:
+                continue
         files = sorted(
             (p for p in AUDIO_CACHE_DIR.glob("*") if p.is_file()),
             key=lambda p: p.stat().st_mtime,  # oldest (= least used) first
@@ -1501,6 +1523,67 @@ def _is_permanent_failure(exc: Exception) -> bool:
     return any(pattern in message for pattern in _PERMANENT_FAILURES)
 
 
+# Terminal failures, remembered across requests.  A track that *every*
+# player client refused (bot check, CDN 403 storm, vanished video) used to
+# re-run the whole extraction + download ladder on every retry the player
+# fired — measured on the live server at 705 extractions and 259 download
+# attempts for a single id in one day.  The memo answers those retries with
+# the very same error in milliseconds until its TTL runs out, after which
+# one fresh full attempt is made again, so a transient blip still heals.
+_STREAM_FAILURES: dict[str, tuple[float, Exception]] = {}
+_stream_failure_guard = threading.Lock()
+
+# Bot checks and CDN 403 storms on datacenter IPs last for *hours* — a
+# retry a few minutes later can only repeat the same refusals.  Anything
+# else (network blip, transient extractor error) gets a much shorter memo
+# so an honest retry recovers quickly.
+_PERSISTENT_FAILURES = (
+    "sign in to confirm",
+    "http error 403",
+    "http error 401",
+)
+
+
+def _failure_ttl(exc: Exception) -> float:
+    """How long the terminal failure of *exc* is worth remembering."""
+    message = str(exc).lower()
+    return 600.0 if any(pattern in message for pattern in _PERSISTENT_FAILURES) else 60.0
+
+
+def _remember_stream_failure(video_id: str, exc: Exception) -> None:
+    """Memoize the terminal failure of *video_id* (see :func:`_stream_failure`)."""
+    # Drop the traceback: the exception outlives this frame and would
+    # otherwise chain one more traceback segment onto itself per retry.
+    exc.__traceback__ = None
+    with _stream_failure_guard:
+        if len(_STREAM_FAILURES) > 256:  # keep the memo bounded
+            _STREAM_FAILURES.clear()
+        _STREAM_FAILURES[video_id] = (time.time() + _failure_ttl(exc), exc)
+
+
+def _stream_failure(video_id: str) -> Exception | None:
+    """The memoized terminal failure of *video_id*, if it is still fresh."""
+    with _stream_failure_guard:
+        entry = _STREAM_FAILURES.get(video_id)
+    if entry is None:
+        return None
+    expiry, exc = entry
+    if expiry < time.time():
+        with _stream_failure_guard:
+            _STREAM_FAILURES.pop(video_id, None)
+        return None
+    # The same instance is re-raised per retry — keep its traceback from
+    # chaining one segment per raise.
+    exc.__traceback__ = None
+    return exc
+
+
+def _forget_stream_failure(video_id: str) -> None:
+    """Clear the memoized failure of *video_id* (something just worked)."""
+    with _stream_failure_guard:
+        _STREAM_FAILURES.pop(video_id, None)
+
+
 class StreamTarget(NamedTuple):
     """A direct CDN URL plus everything the server needs to fetch it."""
 
@@ -1509,7 +1592,11 @@ class StreamTarget(NamedTuple):
     client: str | None
 
 
-def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
+def resolve_stream_url(
+    video_id: str,
+    skip: set | None = None,
+    failed: set | None = None,
+) -> StreamTarget:
     """
     Return a direct CDN URL **and** its request headers for *video_id*.
 
@@ -1519,8 +1606,15 @@ def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
     entirely — that is the difference between a ~200ms and a multi second
     start.
 
+    A terminal failure (every player client refused) is memoized for a few
+    minutes — see :func:`_stream_failure` — so the retry burst of a failing
+    play answers instantly instead of re-running the whole ladder.
+
     :param skip: player clients to leave out (a client whose URL the CDN
                  already answered with ``403``)
+    :param failed: optional set that receives every player client whose
+                   *extraction* failed — a full download would only repeat
+                   the very same extraction, so the caller can skip them
     :raises DurationLimitExceeded: if the track is longer than one hour
     """
     skip = skip or set()
@@ -1529,6 +1623,10 @@ def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
         entry = _STREAM_URLS.get(video_id)
     if entry and entry[2] > now and entry[3] not in skip:
         return StreamTarget(entry[0], dict(entry[1]), entry[3])
+
+    memoized = _stream_failure(video_id)
+    if memoized is not None:
+        raise memoized
 
     last_error: Exception | None = None
     permanent = 0
@@ -1541,6 +1639,8 @@ def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
             raise
         except Exception as exc:  # noqa: BLE001
             last_error = exc
+            if failed is not None:
+                failed.add(client)
             if _is_permanent_failure(exc):
                 # Playability can be client specific, so one alternative is
                 # tried before giving up — but only one: a track that is
@@ -1550,6 +1650,7 @@ def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
                     break
             continue
         _remember_client(client)
+        _forget_stream_failure(video_id)
         with _download_guard:
             _STREAM_URLS[video_id] = (
                 url,
@@ -1559,7 +1660,9 @@ def resolve_stream_url(video_id: str, skip: set | None = None) -> StreamTarget:
             )
         return StreamTarget(url, dict(headers), client)
 
-    raise last_error or ValueError(f"could not resolve a stream URL for {video_id}")
+    error = last_error or ValueError(f"could not resolve a stream URL for {video_id}")
+    _remember_stream_failure(video_id, error)
+    raise error
 
 
 def forget_stream_url(video_id: str) -> None:
@@ -1623,7 +1726,7 @@ def get_stream_url_ttl(stream_url: str) -> int:
     return 300
 
 
-def download_audio(video_id: str) -> str:
+def download_audio(video_id: str, skip: set | None = None) -> str:
     """
     Download the audio of *video_id* on the server with yt-dlp.
 
@@ -1636,9 +1739,16 @@ def download_audio(video_id: str) -> str:
     any byte is written, and the finished file lands in the on-disk audio
     cache, so callers always get a local file instead of a remote audio URL.
 
-    Concurrent calls for the same video share a single download.
+    Concurrent calls for the same video share a single download.  A terminal
+    failure is memoized for a few minutes (see :func:`_stream_failure`) so a
+    retry burst answers instantly, and a full terminal failure is remembered
+    across requests — the retry of a track every client refused used to
+    repeat the entire ladder each time.
 
     :param video_id: YouTube video ID
+    :param skip: player clients whose *extraction* already failed for this
+                 request (a relay attempt above) — re-running them would
+                 only repeat the very same yt-dlp extraction
     :return: path of the cached audio file
     :raises DurationLimitExceeded: if the track is longer than one hour
     """
@@ -1648,6 +1758,11 @@ def download_audio(video_id: str) -> str:
     if cached:
         return str(cached)
 
+    memoized = _stream_failure(video_id)
+    if memoized is not None:
+        raise memoized
+
+    skip = skip or set()
     lock = _lock_for(video_id)
     with lock:
         cached = find_cached_audio(video_id)
@@ -1660,6 +1775,8 @@ def download_audio(video_id: str) -> str:
         permanent = 0
 
         for client in _client_order():
+            if client in skip:
+                continue
             label = client or "default"
             try:
                 with YoutubeDL(_client_options(client, outtmpl)) as ydl:
@@ -1688,6 +1805,7 @@ def download_audio(video_id: str) -> str:
                 if candidate.is_file() and candidate.stat().st_size:
                     produced = candidate
                     _remember_client(client)
+                    _forget_stream_failure(video_id)
                     break
             except DurationLimitExceeded:
                 raise
@@ -1710,9 +1828,15 @@ def download_audio(video_id: str) -> str:
                         break
 
         if produced is None:
-            raise last_error or ValueError(
+            error = last_error or ValueError(
                 f"yt-dlp did not produce an audio file for {video_id}"
             )
+            if not isinstance(error, DurationLimitExceeded):
+                # Every attempted client refused — remember it, so the retry
+                # burst of this play answers instantly (DurationLimitExceeded
+                # is deterministic and raised to the client anyway).
+                _remember_stream_failure(video_id, error)
+            raise error
 
         # One file per video id: while yt-dlp ran, a relay tee or a Telegram
         # mirror may have stored the same track (that race is what used to

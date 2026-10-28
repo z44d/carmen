@@ -675,12 +675,6 @@ async def _proxy_audio(
         await client.aclose()
         raise _UpstreamRejected(f"upstream responded with {status}")
 
-    if upstream.status_code in _REJECTED_STATUS:
-        status = upstream.status_code
-        await upstream.aclose()
-        await client.aclose()
-        raise _UpstreamRejected(f"upstream responded with {status}")
-
     if slice_start:
         # The rescue reopen succeeded or not — a now-rejected status is the
         # same "another player client may fix this" situation as before.
@@ -953,13 +947,21 @@ async def stream_audio(
 
     loop = asyncio.get_running_loop()
     skip: set = set()
+    # Player clients whose *extraction* failed above — a full download would
+    # only repeat the very same yt-dlp extraction, so they are skipped there
+    # (a client the CDN merely rejected while *relaying* is still worth a
+    # real download attempt: yt-dlp fetches with its own headers).
+    extract_failed: set = set()
 
     # 3) relay through the server
     while len(skip) <= len(STREAM_CLIENTS):
         try:
             with debuglog.timed(f"resolve_stream_url {vidId}", log):
                 target = await loop.run_in_executor(
-                    state.executor, functools.partial(resolve_stream_url, vidId, skip)
+                    state.executor,
+                    functools.partial(
+                        resolve_stream_url, vidId, skip, extract_failed
+                    ),
                 )
         except DurationLimitExceeded as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
@@ -1009,7 +1011,8 @@ async def stream_audio(
     # 4) fall back to buffering the whole file on the server
     try:
         path = await loop.run_in_executor(
-            state.executor, functools.partial(download_audio, vidId)
+            state.executor,
+            functools.partial(download_audio, vidId, extract_failed),
         )
     except DurationLimitExceeded as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
