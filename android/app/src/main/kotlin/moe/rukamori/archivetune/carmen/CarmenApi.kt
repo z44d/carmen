@@ -675,15 +675,14 @@ class CarmenApi
                                 }
 
                                 "done" ->
-                                    return@runCatching
-                                        SpotifyConvertOutcome(
-                                            summary =
-                                                parseSpotifySummary(
-                                                    data["summary"] as? JsonObject ?: JsonObject(emptyMap()),
-                                                    fallbackTotal = total,
-                                                ),
-                                            conversions = conversions.toList(),
-                                        )
+                                    return@runCatching SpotifyConvertOutcome(
+                                        summary =
+                                            parseSpotifySummary(
+                                                data["summary"] as? JsonObject ?: JsonObject(emptyMap()),
+                                                fallbackTotal = total,
+                                            ),
+                                        conversions = conversions.toList(),
+                                    )
                             }
                         }
 
