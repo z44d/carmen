@@ -234,6 +234,128 @@ struct API: Sendable {
         return payload.video_url
     }
 
+    // MARK: Spotify import — the app's only POST: preview via GET, then the
+    // conversion streamed back as Server-Sent Events (a POST rules out
+    // EventSource, so the frame reader is hand-rolled like the web client's).
+
+    /// `GET /convert/spotify/playlist` — fast preview: playlist metadata and
+    /// its full Spotify track list, no YouTube Music searching.
+    func spotifyPlaylist(_ link: String) async throws -> SpotifyPlaylistPreview {
+        do {
+            return try await get("/convert/spotify/playlist", ["url": link])
+        } catch let error as APIError {
+            if case .server(let status, let message) = error {
+                throw APIError.server(status: status, message: Self.friendlySpotifyError(status, message))
+            }
+            throw error
+        }
+    }
+
+    /// `POST /convert/spotify/to-ytmusic` — the server answers
+    /// `text/event-stream`: `start`, one `progress` per track in playlist
+    /// order, then `done` with the summary. `onProgress` is invoked on the
+    /// main actor so views can write their `@State` straight from it.
+    func convertSpotifyPlaylist(
+        _ link: String,
+        limit: Int,
+        onProgress: @escaping (SpotifyConvertProgress) -> Void
+    ) async throws -> SpotifyConvertOutcome {
+        var request = URLRequest(url: try url("/convert/spotify/to-ytmusic"))
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = try JSONSerialization.data(withJSONObject: ["url": link, "limit": limit])
+
+        let started = Date()
+        let bytes: URLSession.AsyncBytes
+        let response: URLResponse
+        do {
+            (bytes, response) = try await Self.session.bytes(for: request)
+        } catch let error as URLError where error.code == .cancelled {
+            throw error
+        } catch {
+            DebugLog.log("api", "POST /convert/spotify/to-ytmusic → unreachable: \(error.localizedDescription)")
+            throw APIError.unreachable
+        }
+        guard let http = response as? HTTPURLResponse else { throw APIError.unreachable }
+        DebugLog.log("api", "POST /convert/spotify/to-ytmusic → \(http.statusCode) in \(Self.elapsed(started))s")
+
+        // Failures answer with FastAPI's `{detail}` JSON instead of the stream.
+        if !(200...299).contains(http.statusCode) {
+            var body = ""
+            for try await line in bytes.lines { body += line + "\n" }
+            let object = (try? JSONSerialization.jsonObject(with: Data(body.utf8))) as? [String: Any]
+            let detail = object?["detail"] as? String ?? ""
+            DebugLog.log("api", "convert → rejected: \(detail.prefix(200))")
+            throw APIError.server(
+                status: http.statusCode,
+                message: Self.friendlySpotifyError(http.statusCode, detail)
+            )
+        }
+
+        var playlist: SpotifyPlaylistHead?
+        var results: [SpotifyTrackConversion] = []
+        var summary: SpotifyConvertSummary?
+        var eventName = ""
+        var dataLines: [String] = []
+        let decoder = JSONDecoder()
+
+        for try await line in bytes.lines {
+            if line.isEmpty {
+                // Blank line = dispatch the accumulated frame.
+                let name = eventName
+                let payload = Data(dataLines.joined(separator: "\n").utf8)
+                eventName = ""
+                dataLines = []
+                guard !payload.isEmpty else { continue }
+                switch name {
+                case "start":
+                    playlist = (try? decoder.decode(SpotifyStartEvent.self, from: payload))?.playlist
+                case "progress":
+                    if let event = try? decoder.decode(SpotifyProgressEvent.self, from: payload) {
+                        results.append(event.result)
+                        let update = SpotifyConvertProgress(
+                            done: event.done, total: event.total, result: event.result
+                        )
+                        await MainActor.run { onProgress(update) }
+                    }
+                case "done":
+                    summary = (try? decoder.decode(SpotifyDoneEvent.self, from: payload))?.summary
+                default:
+                    break   // `:` comments and unknown events are ignored
+                }
+            } else if line.hasPrefix("event:") {
+                eventName = String(line.dropFirst(6)).trimmingCharacters(in: .whitespaces)
+            } else if line.hasPrefix("data:") {
+                dataLines.append(String(line.dropFirst(5)).trimmingCharacters(in: .whitespaces))
+            }
+        }
+
+        if let playlist, let summary {
+            DebugLog.log("api", "convert → \(results.count) results (\(summary.matched) matched)")
+            return SpotifyConvertOutcome(playlist: playlist, results: results, summary: summary)
+        }
+        DebugLog.log("api", "convert → stream ended without a done event")
+        throw APIError.decoding
+    }
+
+    /// Port of the web client's `friendlyConvertError`: Spotify/server status
+    /// codes read as sentences, not HTTP.
+    private static func friendlySpotifyError(_ status: Int, _ detail: String) -> String {
+        if status == 404, detail.contains("/convert/") {
+            return "This Carmen server is too old for Spotify import — update the server and try again."
+        }
+        if status == 404 {
+            return "Spotify couldn't find that playlist — it may be private, deleted, or the link is wrong."
+        }
+        if status == 400 {
+            return detail.isEmpty ? "That doesn't look like a Spotify playlist link." : detail
+        }
+        if status == 503 {
+            return "Spotify is busy right now — try again in a minute."
+        }
+        return detail.isEmpty ? "Conversion failed (\(status))." : detail
+    }
+
     /// Probe the stream with a 2-byte range to surface the server's `detail`
     /// message when a track fails to start (same trick as PlayerContext.tsx).
     func streamError(videoId: String) async -> String? {
