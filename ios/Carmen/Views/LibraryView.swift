@@ -8,6 +8,7 @@
 //  needed.
 //
 
+import Foundation
 import SwiftUI
 
 struct LibraryView: View {
@@ -21,6 +22,7 @@ struct LibraryView: View {
     @AppStorage("carmen.library.tab") private var storedTab = LibraryTab.mix.rawValue
 
     @State private var showSettings = false
+    @State private var showSpotifyImport = false
     @State private var showingNewPlaylist = false
     @State private var newName = ""
     @State private var showingRename = false
@@ -64,6 +66,18 @@ struct LibraryView: View {
         }
         .sheet(item: $openedPlaylist) { playlist in
             LocalPlaylistSheet(playlist: playlist)
+        }
+        .sheet(isPresented: $showSpotifyImport) {
+            SpotifyImportSheet { playlist in
+                showSpotifyImport = false
+                // Let the import sheet finish dismissing before the playlist
+                // sheet tries to present on top of it.
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
+                    openedPlaylist = playlist
+                }
+            }
+            .presentationDetents([.large])
+            .presentationCornerRadius(28)
         }
         .alert("New Playlist", isPresented: $showingNewPlaylist) {
             TextField("Name", text: $newName)
@@ -243,6 +257,38 @@ struct LibraryView: View {
                 SectionHeader(title: "Playlists", actionTitle: "+") {
                     showingNewPlaylist = true
                 }
+
+                // The frontend's "Import from Spotify" header button —
+                // pasted link → YT Music matches → a local playlist.
+                M3Card(padding: 14, action: { showSpotifyImport = true }) {
+                    HStack(spacing: 12) {
+                        ZStack {
+                            Circle()
+                                .fill(Color(hex: "1DB954"))
+                                .frame(width: 40, height: 40)
+                            Image(systemName: "play.fill")
+                                .font(.system(size: 15, weight: .bold))
+                                .foregroundStyle(.white)
+                        }
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text("Import from Spotify")
+                                .font(.m3TitleSmall)
+                                .foregroundStyle(m3.onSurface)
+                                .lineLimit(1)
+                            Text("Paste a playlist link — songs get matched on YouTube Music")
+                                .font(.m3BodySmall)
+                                .foregroundStyle(m3.onSurfaceVariant)
+                                .lineLimit(1)
+                                .minimumScaleFactor(0.85)
+                        }
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        Image(systemName: "chevron.right")
+                            .font(.m3BodySmall)
+                            .foregroundStyle(m3.outline)
+                    }
+                }
+                .pressScale(0.99)
+                .padding(.horizontal, 16)
 
                 if library.playlists.isEmpty {
                     M3EmptyState(

@@ -10,6 +10,7 @@ import android.content.Context
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.runInterruptible
 import kotlinx.coroutines.withContext
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
@@ -38,8 +39,10 @@ import moe.rukamori.archivetune.innertube.pages.HomePage
 import moe.rukamori.archivetune.innertube.pages.PlaylistPage
 import moe.rukamori.archivetune.utils.dataStore
 import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
+import okhttp3.RequestBody.Companion.toRequestBody
 import timber.log.Timber
 import java.util.concurrent.TimeUnit
 import javax.inject.Inject
@@ -552,6 +555,238 @@ class CarmenApi
                     val obj = root as? JsonObject
                     obj?.get("error")?.maybeStr() ?: obj?.get("message")?.maybeStr()
                 }
+
+        // ------------------------------------------------------------------
+        // Spotify conversion (`/convert/spotify/*`, see server/routes/convert.py)
+        // ------------------------------------------------------------------
+
+        /**
+         * Dedicated client for the conversion POST: that call is a
+         * server-sent event stream which legitimately runs for minutes on
+         * large playlists — far past [client]'s 20s read timeout.
+         */
+        private val spotifyConvertClient: OkHttpClient =
+            OkHttpClient
+                .Builder()
+                .connectTimeout(30, TimeUnit.SECONDS)
+                .readTimeout(10, TimeUnit.MINUTES)
+                .build()
+
+        /** `GET /convert/spotify/playlist?url=…` — the fast preview step. */
+        suspend fun spotifyPlaylistPreview(playlistUrl: String): Result<SpotifyPlaylistPreview> =
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val url =
+                        baseUrl().toHttpUrlOrNull()
+                            ?.newBuilder()
+                            ?.apply {
+                                addEncodedPathSegments("convert/spotify/playlist")
+                                addQueryParameter("url", playlistUrl)
+                            }?.build()
+                            ?: throw IllegalStateException("Carmen: malformed server url")
+
+                    val request = Request.Builder().url(url).header("Accept", "application/json").build()
+                    client.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IllegalStateException(friendlySpotifyError(response.code, response.body?.string()))
+                        }
+                        parseSpotifyPreview(Json.parseToJsonElement(response.body?.string().orEmpty()))
+                            ?: throw IllegalStateException("Carmen: malformed playlist preview")
+                    }
+                }.onFailure { throwable ->
+                    if (throwable !is kotlinx.coroutines.CancellationException) {
+                        Timber.w(throwable, "Carmen spotify preview failed")
+                    }
+                }
+            }
+
+        /**
+         * `POST /convert/spotify/to-ytmusic` — server-sent events:
+         * `start {total}` → `progress {done, total, result}`* → `done {summary}`.
+         * [onProgress] fires as each track resolves; the returned outcome
+         * carries every conversion plus the final counts.
+         */
+        suspend fun convertSpotifyPlaylist(
+            playlistUrl: String,
+            limit: Int,
+            onProgress: (SpotifyConvertProgress) -> Unit,
+        ): Result<SpotifyConvertOutcome> =
+            withContext(Dispatchers.IO) {
+                runCatching {
+                    val url =
+                        baseUrl().toHttpUrlOrNull()
+                            ?.newBuilder()
+                            ?.apply { addEncodedPathSegments("convert/spotify/to-ytmusic") }
+                            ?.build()
+                            ?: throw IllegalStateException("Carmen: malformed server url")
+
+                    val payload = """{"url":${JsonPrimitive(playlistUrl)},"limit":${limit.coerceIn(1, 200)}}"""
+                    val request =
+                        Request
+                            .Builder()
+                            .url(url)
+                            .header("Accept", "text/event-stream")
+                            .post(payload.toRequestBody("application/json".toMediaType()))
+                            .build()
+
+                    spotifyConvertClient.newCall(request).execute().use { response ->
+                        if (!response.isSuccessful) {
+                            throw IllegalStateException(friendlySpotifyError(response.code, response.body?.string()))
+                        }
+
+                        val source =
+                            response.body?.source()
+                                ?: throw IllegalStateException("Carmen: empty conversion stream")
+                        var eventName: String? = null
+                        var total = 0
+                        val conversions = mutableListOf<SpotifyTrackConversion>()
+
+                        while (true) {
+                            // Blocking okio read — interruptible so cancelling
+                            // the coroutine tears the call down promptly.
+                            val raw = runInterruptible { source.readUtf8Line() } ?: break
+                            val line = raw.trim()
+                            if (line.isEmpty()) {
+                                eventName = null
+                                continue
+                            }
+                            if (line.startsWith(":")) continue
+                            if (line.startsWith("event:")) {
+                                eventName = line.removePrefix("event:").trim()
+                                continue
+                            }
+                            if (!line.startsWith("data:")) continue
+                            val data =
+                                runCatching { Json.parseToJsonElement(line.removePrefix("data:").trim()) }
+                                    .getOrNull() as? JsonObject ?: continue
+
+                            when (eventName) {
+                                "start" -> total = data["total"].int() ?: total
+
+                                "progress" -> {
+                                    (data["result"] as? JsonObject)?.let { conversions += parseSpotifyConversion(it) }
+                                    onProgress(
+                                        SpotifyConvertProgress(
+                                            done = data["done"].int() ?: conversions.size,
+                                            total = data["total"].int() ?: total,
+                                            conversions = conversions.toList(),
+                                        ),
+                                    )
+                                }
+
+                                "done" ->
+                                    return@runCatching SpotifyConvertOutcome(
+                                        summary =
+                                            parseSpotifySummary(
+                                                data["summary"] as? JsonObject ?: JsonObject(emptyMap()),
+                                                fallbackTotal = total,
+                                            ),
+                                        conversions = conversions.toList(),
+                                    )
+                            }
+                        }
+
+                        throw IllegalStateException("Spotify import ended before the server sent its summary.")
+                    }
+                }.onFailure { throwable ->
+                    if (throwable !is kotlinx.coroutines.CancellationException) {
+                        Timber.w(throwable, "Carmen spotify convert failed")
+                    }
+                }
+            }
+
+        private fun parseSpotifyPreview(root: JsonElement): SpotifyPlaylistPreview? {
+            val obj = root as? JsonObject ?: return null
+            val tracks =
+                (obj["tracks"] as? JsonArray)
+                    ?.mapNotNull { it as? JsonObject }
+                    ?.filter { it["id"].maybeStr() != null && it["title"].maybeStr() != null }
+                    ?.map(::parseSpotifyTrackInfo)
+                    .orEmpty()
+            return SpotifyPlaylistPreview(
+                id = obj["id"].maybeStr().orEmpty(),
+                name = obj["name"].maybeStr().orEmpty(),
+                owner = obj["owner"].maybeStr(),
+                trackCount = obj["track_count"].int() ?: tracks.size,
+                artworkUrl = obj["artwork"].maybeStr(),
+                tracks = tracks,
+            )
+        }
+
+        /** `{spotify, status, confidence, match, error}` of one progress event. */
+        private fun parseSpotifyConversion(entry: JsonObject): SpotifyTrackConversion =
+            SpotifyTrackConversion(
+                track =
+                    (entry["spotify"] as? JsonObject)?.let(::parseSpotifyTrackInfo)
+                        ?: SpotifyTrackInfo(
+                            id = "",
+                            name = "Unknown title",
+                            artists = "",
+                            album = "",
+                            durationMs = 0L,
+                            artworkUrl = null,
+                        ),
+                status = SpotifyMatchStatus.fromWire(entry["status"].maybeStr()),
+                confidence = entry["confidence"].int(),
+                song = (entry["match"] as? JsonObject)?.let(::elementToSongItem),
+                error = entry["error"].maybeStr(),
+            )
+
+        /** Server track dict: `{id, title, artist, album, artwork, duration_ms, …}`. */
+        private fun parseSpotifyTrackInfo(obj: JsonObject): SpotifyTrackInfo =
+            SpotifyTrackInfo(
+                id = obj["id"].maybeStr().orEmpty(),
+                name = obj["title"].maybeStr() ?: obj["name"].maybeStr() ?: "Unknown title",
+                artists = obj["artist"].maybeStr() ?: spotifyArtistNames(obj["artists"]),
+                album = obj["album"].maybeStr().orEmpty(),
+                durationMs = obj["duration_ms"].int()?.toLong() ?: 0L,
+                artworkUrl = obj["artwork"].maybeStr(),
+            )
+
+        private fun spotifyArtistNames(element: JsonElement?): String =
+            (element as? JsonArray)
+                ?.mapNotNull { item ->
+                    when (item) {
+                        is JsonPrimitive -> item.content.takeIf { it.isNotBlank() }
+                        is JsonObject -> item["name"].maybeStr()
+                        else -> null
+                    }
+                }?.joinToString(", ")
+                .orEmpty()
+
+        private fun parseSpotifySummary(
+            data: JsonObject,
+            fallbackTotal: Int,
+        ): SpotifyConvertSummary =
+            SpotifyConvertSummary(
+                total = data["total"].int() ?: fallbackTotal,
+                matched = data["matched"].int() ?: 0,
+                approximate = data["approximate"].int() ?: 0,
+                notFound = data["not_found"].int() ?: 0,
+                errors = data["error"].int() ?: 0,
+            )
+
+        /** Maps Spotify HTTP failures to the same copy the web client shows. */
+        private fun friendlySpotifyError(
+            code: Int,
+            rawBody: String?,
+        ): String {
+            val detail =
+                (runCatching { Json.parseToJsonElement(rawBody.orEmpty()) }.getOrNull() as? JsonObject)
+                    ?.get("detail")
+                    ?.maybeStr()
+
+            if (detail != null && "/convert/" in detail) {
+                return "This Carmen server is too old for Spotify import — update the server and try again."
+            }
+            return when (code) {
+                400 -> "That doesn't look like a valid Spotify playlist link."
+                404 -> detail ?: "Spotify import is not available on this Carmen server."
+                503 -> "Carmen is still signing in to Spotify — wait 10–20 seconds, then try again."
+                502 -> detail ?: "Spotify returned an error — try again in a moment."
+                else -> detail ?: "Spotify import failed (HTTP $code)."
+            }
+        }
 
         // ------------------------------------------------------------------
         // Mappers

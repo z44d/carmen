@@ -105,6 +105,7 @@ import moe.rukamori.archivetune.ui.component.CreatePlaylistDialog
 import moe.rukamori.archivetune.ui.component.ItemThumbnail
 import moe.rukamori.archivetune.ui.component.LocalMenuState
 import moe.rukamori.archivetune.ui.menu.PlaylistMenu
+import moe.rukamori.archivetune.ui.menu.SpotifyImportDialog
 import moe.rukamori.archivetune.ui.menu.YouTubePlaylistMenu
 import moe.rukamori.archivetune.ui.theme.PlayerColorExtractor
 import moe.rukamori.archivetune.utils.rememberEnumPreference
@@ -158,6 +159,7 @@ fun LibraryPlaylistsScreen(
 
     var isGridView by rememberSaveable { mutableStateOf(false) }
     var showCreatePlaylistDialog by rememberSaveable { mutableStateOf(false) }
+    var showSpotifyImportDialog by rememberSaveable { mutableStateOf(false) }
     val refreshState by viewModel.refreshState.collectAsStateWithLifecycle()
     val refreshLibrary = remember(viewModel) { { viewModel.sync() } }
     val onRefreshErrorShown = remember(viewModel) { { viewModel.onRefreshErrorShown() } }
@@ -195,6 +197,13 @@ fun LibraryPlaylistsScreen(
     if (showCreatePlaylistDialog) {
         CreatePlaylistDialog(
             onDismiss = { showCreatePlaylistDialog = false },
+        )
+    }
+
+    if (showSpotifyImportDialog) {
+        SpotifyImportDialog(
+            onDismiss = { showSpotifyImportDialog = false },
+            onOpenPlaylist = { playlistId -> navController.navigate("local_playlist/$playlistId") },
         )
     }
 
@@ -428,6 +437,18 @@ fun LibraryPlaylistsScreen(
                     }
 
                     Spacer(modifier = Modifier.width(12.dp))
+
+                    IconButton(
+                        onClick = { showSpotifyImportDialog = true },
+                        modifier = Modifier.size(40.dp),
+                    ) {
+                        Icon(
+                            painter = painterResource(id = R.drawable.spotify_icon),
+                            contentDescription = stringResource(R.string.spotify_import_title),
+                            tint = Color.Unspecified,
+                            modifier = Modifier.size(18.dp),
+                        )
+                    }
 
                     IconButton(
                         onClick = { showCreatePlaylistDialog = true },

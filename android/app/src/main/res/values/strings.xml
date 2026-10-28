@@ -1136,4 +1136,26 @@
     <string name="scheduled_backup_update_failed">Scheduled backup settings could not be saved</string>
     <string name="gatekeeper_connection_blocked">Connection blocked by Carmen Remote. This app could not be verified as an official Carmen build. Install an official build from https://github.com/rukamori/Carmen or https://t.me/CarmenGC.</string>
     <string name="local_songs_metadata_unavailable">Imported %1$d songs. Online metadata is unavailable; file tags were kept.</string>
+    <string name="spotify_import_title">Import from Spotify</string>
+    <string name="spotify_import_subtitle">Paste a Spotify playlist link. Carmen matches every track with YouTube Music before anything is saved.</string>
+    <string name="spotify_import_url_label">Playlist link</string>
+    <string name="spotify_import_url_placeholder">https://open.spotify.com/playlist/…</string>
+    <string name="spotify_import_preview">Preview</string>
+    <string name="spotify_import_convert">Convert</string>
+    <string name="spotify_import_save">Save playlist</string>
+    <string name="spotify_import_open">Open</string>
+    <string name="spotify_import_loading">Loading the Spotify playlist…</string>
+    <string name="spotify_import_track_count">Tracks %1$d</string>
+    <string name="spotify_import_preview_hint">Converting matches every track against YouTube Music — unmatched tracks are skipped.</string>
+    <string name="spotify_import_progress">Converting %1$d of %2$d tracks…</string>
+    <string name="spotify_import_results_subtitle">Added %1$d of %2$d tracks</string>
+    <string name="spotify_import_results_counts">Matched %1$d · Approximate %2$d · Not found %3$d</string>
+    <string name="spotify_import_results_failed">No tracks could be matched — nothing to save.</string>
+    <string name="spotify_import_status_approximate">Approx.</string>
+    <string name="spotify_import_status_not_found">Not found</string>
+    <string name="spotify_import_status_error">Error</string>
+    <string name="spotify_import_saved_message">Saved \"%1$s\" to your library.</string>
+    <string name="spotify_import_unknown_owner">Unknown owner</string>
+    <string name="spotify_import_select_all">Select all</string>
+    <string name="spotify_import_clear">Clear</string>
 </resources>
