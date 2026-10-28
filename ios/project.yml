@@ -47,6 +47,11 @@ targets:
         CFBundleShortVersionString: $(MARKETING_VERSION)
         CFBundleVersion: $(CURRENT_PROJECT_VERSION)
         UILaunchScreen: {}
+        # Poppins (copied from android/app/src/main/res/font/) — the Android
+        # app's default family; Font.m3* in Views/Theme/Theme.swift maps the
+        # Material type scale onto it.
+        UIAppFonts:
+          - Fonts/poppins.ttf
         UISupportedInterfaceOrientations:
           - UIInterfaceOrientationPortrait
         # Keep playing when the screen locks — also what lets the app keep

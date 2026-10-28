@@ -1,55 +1,56 @@
 //
 //  MiniPlayer.swift
-//  Carmen — the floating now-playing bar above the tab bar.
+//  Carmen — the Material now-playing bar stacked on the nav pill.
 //
-//  Tapping (or dragging up) expands the full player; the trailing controls
-//  are the full transport — previous, play/pause and next. A hairline progress
-//  rail rides the top edge and the play button carries the chosen accent —
-//  same chrome the frontend's PlayerBar shows. The queue has its own tab,
-//  next to Search.
+//  Android's MiniPlayer: a 70pt surface bar with the cover thumb, the
+//  title/artist pair and the full transport (previous / filled play circle /
+//  next). A hairline progress rail rides the top edge. Tapping or swiping up
+//  expands the full player. The bar is a plain rectangle — RootView stacks it
+//  on the nav pill and clips the combined blob, so no corners live here.
 //
 
 import SwiftUI
 
 struct MiniPlayer: View {
     @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
 
     var body: some View {
         if let track = player.current {
-            HStack(spacing: 10) {
-                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 6)
-                    .frame(width: 40, height: 40)
-                    .shadow(color: .black.opacity(0.2), radius: 3, y: 1)
+            HStack(spacing: 12) {
+                ArtworkView(url: track.artwork, fallbackURL: track.artworkAlt, cornerRadius: 10)
+                    .frame(width: 46, height: 46)
 
-                VStack(alignment: .leading, spacing: 1) {
+                VStack(alignment: .leading, spacing: 2) {
                     Text(track.title)
-                        .font(.subheadline.weight(.semibold))
+                        .font(.m3TitleSmall)
+                        .foregroundStyle(m3.onSurface)
                         .lineLimit(1)
-                        .foregroundStyle(.primary)
+                        .minimumScaleFactor(0.8)
                     Text(track.artistLine)
-                        .font(.caption)
+                        .font(.m3BodySmall)
+                        .foregroundStyle(m3.onSurfaceVariant)
                         .lineLimit(1)
-                        .foregroundStyle(.secondary)
+                        .minimumScaleFactor(0.8)
                 }
 
-                Spacer(minLength: 8)
+                Spacer(minLength: 4)
 
                 if player.isBuffering {
                     ProgressView()
                         .controlSize(.small)
-                        .padding(.trailing, 2)
+                        .tint(m3.primary)
                 }
 
                 Button {
                     player.previous()
                 } label: {
                     Image(systemName: "backward.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
+                        .font(.footnote.weight(.semibold))
                         .frame(width: 28, height: 32)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(M3IconButtonStyle())
                 .opacity(player.hasPrevious ? 1 : 0.35)
                 .accessibilityLabel("Previous")
 
@@ -57,10 +58,10 @@ struct MiniPlayer: View {
                     player.togglePlayPause()
                 } label: {
                     Image(systemName: player.isPlaying ? "pause.fill" : "play.fill")
-                        .font(.title3)
-                        .foregroundStyle(Color.carmenOnAccent)
-                        .frame(width: 32, height: 32)
-                        .background(Circle().fill(Color.carmen))
+                        .font(.body.weight(.semibold))
+                        .foregroundStyle(m3.onPrimary)
+                        .frame(width: 40, height: 40)
+                        .background(m3.primary, in: Circle())
                         .contentShape(Circle())
                 }
                 .buttonStyle(.plain)
@@ -70,23 +71,22 @@ struct MiniPlayer: View {
                     player.next()
                 } label: {
                     Image(systemName: "forward.fill")
-                        .font(.footnote)
-                        .foregroundStyle(.primary)
+                        .font(.footnote.weight(.semibold))
                         .frame(width: 28, height: 32)
                         .contentShape(Rectangle())
                 }
-                .buttonStyle(.plain)
+                .buttonStyle(M3IconButtonStyle())
                 .opacity(player.hasNext ? 1 : 0.35)
                 .accessibilityLabel("Next")
             }
             .padding(.horizontal, 12)
-            .frame(height: 56)
-            .glassCard(cornerRadius: 16)
+            .frame(height: M3Dim.miniPlayer)
+            .background(m3.surfaceContainer)
             .overlay(alignment: .top) {
-                // Progress rail, inset so it never pokes out of the corners.
+                // Hairline progress rail, inset so it never pokes out.
                 GeometryReader { proxy in
                     Capsule()
-                        .fill(Color.carmen)
+                        .fill(m3.primary)
                         .frame(width: proxy.size.width * player.progress, height: 2)
                 }
                 .frame(height: 2)

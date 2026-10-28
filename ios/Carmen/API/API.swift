@@ -173,6 +173,12 @@ struct API: Sendable {
         try await get("/browsing/artist/\(channelId)")
     }
 
+    /// A podcast show — `/podcasts/podcast/{playlistId}` returns the show's
+    /// metadata plus its episodes (each decodes as a `Track`).
+    func podcast(_ playlistId: String, limit: Int = 100) async throws -> PodcastDetail {
+        try await get("/podcasts/podcast/\(playlistId)", ["limit": String(limit)])
+    }
+
     /// `/watch` — builds a queue from a song (optionally YouTube's radio
     /// station around it) or a playlist.
     func watch(
