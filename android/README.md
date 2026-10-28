@@ -26,7 +26,7 @@ headers are preserved where the GPL requires them).
 - **Carmen branding** — `com.z44d.carmen` application id, Carmen launcher
   icon, About screen (z44d as lead developer, with an explicit
   "forked from ArchiveTune" credit for Rukamori), fastlane metadata, and
-  version line at 1.0.1 (code 2). Internal Kotlin packages keep the
+  version line at 1.1.0 (code 3). Internal Kotlin packages keep the
   upstream `moe.rukamori.archivetune` namespace to stay diff-friendly with
   upstream.
 - **Upstream features kept** — downloads, synced lyrics (7 providers),

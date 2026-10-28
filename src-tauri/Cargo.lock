@@ -493,7 +493,7 @@ dependencies = [
 
 [[package]]
 name = "carmen"
-version = "1.0.1"
+version = "1.1.0"
 dependencies = [
  "battery",
  "serde",
