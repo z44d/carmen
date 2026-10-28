@@ -1,0 +1,87 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta
+      name="viewport"
+      content="width=device-width, initial-scale=1.0, viewport-fit=cover, maximum-scale=1.0, user-scalable=no"
+    />
+    <meta name="theme-color" content="#4CAF50" />
+    <meta name="description" content="Carmen — stream, play and download your music." />
+    <!-- iOS Safari / PWA: "Add to Home Screen" runs the app full-screen with
+         its own title. `default` status bar keeps an opaque bar above the
+         page; the pinned header clears env(safe-area-inset-top) itself when
+         the layout does run under the bar (see Layout / styles.css). -->
+    <meta name="mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-capable" content="yes" />
+    <meta name="apple-mobile-web-app-status-bar-style" content="default" />
+    <meta name="apple-mobile-web-app-title" content="Carmen" />
+    <title>Carmen</title>
+    <!-- App logo everywhere the browser looks: tab favicon, iOS home-screen
+         icon, and the share-card image. Relative URLs so the bundle keeps
+         working from any base path (GitHub Pages serves it under /<repo>/). -->
+    <link rel="icon" type="image/png" href="./favicon.png" />
+    <link rel="apple-touch-icon" href="./apple-touch-icon.png" />
+    <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Carmen" />
+    <meta property="og:title" content="Carmen" />
+    <meta property="og:description" content="Carmen — stream, play and download your music." />
+    <meta property="og:image" content="./logo.png" />
+    <meta name="twitter:card" content="summary" />
+    <meta name="twitter:title" content="Carmen" />
+    <meta name="twitter:description" content="Carmen — stream, play and download your music." />
+    <meta name="twitter:image" content="./logo.png" />
+    <link rel="preconnect" href="https://i.ytimg.com" />
+    <link rel="preconnect" href="https://yt3.googleusercontent.com" crossorigin />
+    <link rel="preconnect" href="https://music.youtube.com" />
+    <style>
+      /*
+       * Native-app window lock, applied before the bundle paints so the
+       * webview can never rubber-band or scroll at the root: the page
+       * scrolls inside <main> only (see Layout).  Mirrored in styles.css
+       * (@layer base) — keep both in sync.
+       *
+       * Deliberately **no** status-bar padding here: the root must stay
+       * flush with the window edge (the header and the player sheet paint
+       * their washes under the status bar and pad themselves with
+       * `var(--sat)`). Padding all three selectors stacked the inset three
+       * times and shoved the whole app far below the status bar.
+       */
+      html,
+      body,
+      #root {
+        height: 100%;
+        margin: 0;
+        padding: 0;
+        overflow: hidden;
+        overscroll-behavior: none;
+        user-select: none;
+        -webkit-user-select: none;
+        -webkit-touch-callout: none;
+      }
+      /* Re-enable selection strictly for text inputs. */
+      input,
+      textarea,
+      [contenteditable='true'] {
+        user-select: text;
+        -webkit-user-select: text;
+      }
+      ::-webkit-scrollbar {
+        width: 8px;
+        height: 8px;
+      }
+      ::-webkit-scrollbar-thumb {
+        background: rgba(128, 128, 128, 0.35);
+        border-radius: 8px;
+      }
+      ::-webkit-scrollbar-track {
+        background: transparent;
+      }
+    </style>
+    <script type="module" crossorigin src="./assets/index-d7NfYAge.js"></script>
+    <link rel="stylesheet" crossorigin href="./assets/index-dSsOhfSD.css">
+  </head>
+  <body>
+    <div id="root"></div>
+  </body>
+</html>
