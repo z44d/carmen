@@ -115,7 +115,7 @@ export default function PlaylistsSection({ onOpen }: PlaylistsSectionProps) {
               aria-label="Import from Spotify"
               startIcon={<SpotifyMark size={18} />}
               onClick={() => setSpotifyOpen(true)}
-              className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760]"
+              className="!bg-body !text-bg hover:brightness-90"
             >
               {/* Short label on narrow phones so both actions fit. */}
               <span aria-hidden className="hidden min-[420px]:inline">Import from Spotify</span>

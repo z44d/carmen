@@ -8,13 +8,12 @@ import {
   TextField,
   ToggleButton,
   ToggleButtonGroup,
-  Tooltip,
 } from '../components/ui';
 import type { ReactElement, ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../utils/cn';
-import { ACCENTS, DEFAULT_ACCENT, FONTS, fontStack } from '../theme';
+import { FONTS, fontStack } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { useBattery } from '../settings/battery';
 import { updateSettings, useLowBatteryMode, useSettings } from '../settings/store';
@@ -41,15 +40,14 @@ const WARNING_TEXT = 'text-[#ed6c02] dark:text-[#ff9800]';
 /** Titled card grouping one group of settings. */
 function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
-    <div>
-      {/* MUI's `overline` variant: 12px, uppercase, the tall 2.66 line box. */}
-      <span className="ml-1 block text-xs uppercase leading-[2.66] text-muted">
+    <section>
+      <h2 className="m-0 text-[19px] font-bold leading-tight tracking-[-0.01em]">
         {title}
-      </span>
-      <Paper variant="outlined" className="mt-[6px] rounded-[42px] p-4">
+      </h2>
+      <Paper variant="outlined" className="mt-3 rounded-[12px] p-4">
         {children}
       </Paper>
-    </div>
+    </section>
   );
 }
 
@@ -68,9 +66,8 @@ interface CreditProps {
  * is only the handle, the icon carries the rest.
  */
 function Credit({ href, name, icon, iconColor, children }: CreditProps) {
-  // The chip used to paint its icon through `sx`; `text.primary` is not a
-  // CSS colour, so those two marks always inherited the chip's own text —
-  // only a real colour (Telegram's teal) ever took.
+  // Icons inherit the chip's own text colour: no brand hues in the
+  // credits row — every mark wears the same neutral chrome.
   const painted = /^(#|rgb|hsl|var\()/i.test(iconColor);
   return (
     <a
@@ -101,17 +98,16 @@ function Credit({ href, name, icon, iconColor, children }: CreditProps) {
 }
 
 /**
- * Theme engine controls: color mode + accent color + interface font.
+ * Theme engine controls: color mode + interface font. The colour system
+ * is neutral by design — there is no accent picker: active states and
+ * focus rings wear the body text colour in both themes.
  *
  * Every persisted choice is written straight through the settings store;
- * the theme context lends its session state (the resolved mode, the color
- * read from the playing cover) and the effective accent / adaptive values,
- * which low battery mode overrides.
+ * the theme context lends the resolved mode for the status chip.
  */
 export default function SettingsPage() {
   const {
     themeMode,
-    accent,
     font,
     lyricsProvider,
     lyricsSize,
@@ -132,17 +128,8 @@ export default function SettingsPage() {
   // kick-in) and the reading behind its status line.
   const lowBatteryActive = useLowBatteryMode();
   const battery = useBattery();
-  // `adaptiveAccent` and `accentInUse` come from the theme context: they are
-  // the *effective* values, so low battery mode shows through here.
-  const { adaptiveColor, resolved, accentInUse, adaptiveAccent } = useTheme();
+  const { resolved } = useTheme();
   const selectedFont = FONTS.find((option) => option.id === font) || FONTS[0];
-
-  // A white accent on the light theme would paint primary labels, borders
-  // and icons white on white — low battery mode pins the accent to
-  // white (and a black cover can make adaptive pick it too), so those few
-  // spots fall back to plain colours while it reads that way. The dark
-  // theme reads white perfectly and keeps them.
-  const whiteOnLight = resolved === 'light' && accentInUse.toLowerCase() === '#ffffff';
 
   // App version + runtime facts (Settings → About). Tauri only — the web
   // build is whatever CI deployed, so there is nothing to version-check.
@@ -196,10 +183,10 @@ export default function SettingsPage() {
   };
 
   return (
-    <Container maxWidth="sm" className="pb-8 pt-4 md:pt-6">
-      <div className="flex flex-col gap-6">
+    <Container maxWidth="sm" className="pb-10 pt-6 md:pt-8">
+      <div className="flex flex-col gap-9">
         <div>
-          <h5 className="m-0 text-2xl font-bold">Settings</h5>
+          <h5 className="m-0 text-[26px] font-extrabold leading-tight tracking-[-0.01em]">Settings</h5>
           <p className="m-0 text-sm leading-[1.43] text-muted">
             Personalize Carmen
           </p>
@@ -216,7 +203,7 @@ export default function SettingsPage() {
                   size="small"
                   label={`Currently ${resolved}`}
                   variant="outlined"
-                  className={cn(!whiteOnLight && '!border-accent/50 !text-accent')}
+                  className="!border-accent/50 !text-accent"
                 />
               </div>
               <ToggleButtonGroup
@@ -256,7 +243,7 @@ export default function SettingsPage() {
                   size="small"
                   label={selectedFont.name}
                   variant="outlined"
-                  className={cn(!whiteOnLight && '!border-accent/50 !text-accent')}
+                  className="!border-accent/50 !text-accent"
                 />
               </div>
               <ToggleButtonGroup
@@ -277,7 +264,7 @@ export default function SettingsPage() {
                 ))}
               </ToggleButtonGroup>
               <div
-                className="mt-[10px] rounded-[28px] bg-hover p-3"
+                className="mt-[10px] rounded-[12px] bg-hover p-3"
                 style={{ fontFamily: fontStack(font) }}
               >
                 <p className="m-0 truncate font-bold">
@@ -299,98 +286,7 @@ export default function SettingsPage() {
               </span>
             </div>
 
-            <Divider />
 
-            <div>
-              <div className="mb-2 flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Accent color
-                </p>
-                <span className="font-mono text-xs leading-[1.4] text-muted">
-                  {accent.toUpperCase()}
-                </span>
-              </div>
-              <div
-                role="radiogroup"
-                aria-label="Accent color"
-                className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-2"
-              >
-                {ACCENTS.map((option) => {
-                  const selected = accent.toLowerCase() === option.color.toLowerCase();
-                  return (
-                    <Tooltip title={option.name} key={option.id}>
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={option.name}
-                        onClick={() => updateSettings({ accent: option.color })}
-                        className={cn(
-                          'grid aspect-square w-full cursor-pointer place-items-center rounded-full p-0',
-                          'transition-transform duration-150 hover:scale-[1.08]',
-                          selected ? 'border-[3px]' : 'border-2',
-                          selected
-                            ? 'border-body'
-                            : // white on white paper needs an edge to be seen
-                              option.color.toLowerCase() === '#ffffff'
-                              ? 'border-line'
-                              : 'border-transparent',
-                          // a white swatch would hide a white checkmark
-                          option.color.toLowerCase() === '#ffffff' ? 'text-[#12160f]' : 'text-white',
-                        )}
-                        style={{ backgroundColor: option.color }}
-                      >
-                        {selected && <CheckIcon sx={{ fontSize: 18 }} />}
-                      </button>
-                    </Tooltip>
-                  );
-                })}
-              </div>
-              <span className="mt-2 block text-xs leading-[1.4] text-muted">
-                Defaults to Material Green ({DEFAULT_ACCENT}).
-                {lowBatteryActive && ' Low battery mode overrides it with white while it is on.'}
-              </span>
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Adaptive accent color
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  The accent follows the cover of the song that is playing —
-                  the most used color of the artwork, or white when the cover
-                  is black. Your chosen accent is used while nothing plays.
-                </span>
-                {lowBatteryActive && (
-                  <span className="block text-xs leading-[1.4] text-muted">
-                    Paused while low battery mode is on — your choice is
-                    kept and returns when you turn it off.
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={adaptiveAccent}
-                disabled={lowBatteryActive}
-                onChange={(_, checked) => updateSettings({ adaptiveAccent: checked })}
-                inputProps={{ 'aria-label': 'Adaptive accent color' }}
-                className="shrink-0"
-              />
-            </div>
-
-            {adaptiveAccent && adaptiveColor && (
-              <div className="-mt-[2px] flex flex-row items-center gap-2">
-                <div
-                  className="h-[14px] w-[14px] shrink-0 rounded-full border border-line"
-                  style={{ backgroundColor: adaptiveColor }}
-                />
-                <span className="font-mono text-xs leading-[1.4] text-muted">
-                  {adaptiveColor} — read from the cover of the playing song
-                </span>
-              </div>
-            )}
 
             <Divider />
 
@@ -401,7 +297,7 @@ export default function SettingsPage() {
                 </p>
                 <span className="block text-xs leading-[1.4] text-muted">
                   Saves power by disabling artwork theming, blur and ambient
-                  effects — the accent turns white.
+                  effects.
                 </span>
                 {battery.level !== null && (
                   <span
@@ -506,7 +402,7 @@ export default function SettingsPage() {
                   Blur effects
                 </p>
                 <span className="block text-xs leading-[1.4] text-muted">
-                  Glass backdrops, accent glows and the ambient wash — off
+                  Glass backdrops and the ambient wash — off
                   gives flat, lighter surfaces.
                 </span>
                 {lowBatteryActive && !blurEffects && (
@@ -644,28 +540,6 @@ export default function SettingsPage() {
               />
             </div>
 
-            <div className="flex items-center gap-3 rounded-[28px] bg-hover p-3">
-              <div
-                className={cn(
-                  'h-9 w-9 rounded-full bg-accent',
-                  // a white accent needs an edge to be seen on this row
-                  whiteOnLight && 'border border-line',
-                )}
-              />
-              <div>
-                <p
-                  className={cn(
-                    'm-0 text-sm leading-[1.43] font-semibold',
-                    whiteOnLight ? 'text-body' : 'text-accent',
-                  )}
-                >
-                  Primary accent preview
-                </p>
-                <span className="text-xs leading-[1.4] text-muted">
-                  Buttons, active lines and highlights use this color
-                </span>
-              </div>
-            </div>
           </div>
         </Section>
 
@@ -731,8 +605,8 @@ export default function SettingsPage() {
                   aria-pressed={selected}
                   className={cn(
                     'flex w-full cursor-pointer items-center justify-between gap-3',
-                    'rounded-[28px] border-0 px-[10px] py-[6px] text-left text-body hover:bg-hover',
-                    selected && 'bg-[rgba(0,0,0,0.08)] dark:bg-[rgba(255,255,255,0.12)]',
+                    'rounded-[12px] border-0 px-[10px] py-[6px] text-left text-body hover:bg-hover',
+                    selected && 'bg-hover',
                   )}
                 >
                   <div className="min-w-0">
@@ -745,7 +619,7 @@ export default function SettingsPage() {
                       </span>
                     )}
                   </div>
-                  {selected && <CheckIcon color={whiteOnLight ? 'action' : 'primary'} sx={{ fontSize: 18 }} />}
+                  {selected && <CheckIcon color="primary" sx={{ fontSize: 18 }} />}
                 </button>
               );
             })}
@@ -894,7 +768,7 @@ export default function SettingsPage() {
                 href="https://t.me/zaidballour"
                 name="Telegram"
                 icon={<TelegramIcon fontSize="inherit" />}
-                iconColor="#229ED9"
+                iconColor="text.primary"
               >
                 @zaidballour
               </Credit>

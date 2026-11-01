@@ -5,8 +5,8 @@
  * `data-theme="light|dark"` plus `--app-*` custom properties (accent,
  * accent-fg, font, palette).  The `@theme` block maps those onto Tailwind's
  * namespace, so `bg-surface`, `text-muted`, `border-line`, `font-ui` and
- * `bg-accent` track the Settings choices — accent included, which still
- * changes per track while adaptive accenting is on.
+ * `bg-accent` track the Settings choices — the accent token always
+ * resolves to the body text colour, so chrome stays neutral.
  */
 @import "tailwindcss";
 
@@ -23,7 +23,7 @@
   --breakpoint-xl: 1536px;
 
   /* Published by ThemeProvider — dynamic at runtime. */
-  --color-accent: var(--app-accent, #4caf50);
+  --color-accent: var(--app-accent, #fafafa);
   --color-accent-fg: var(--app-accent-fg, #ffffff);
   /* Text on top of a filled accent surface (MUI's contrastText). */
   --color-accent-contrast: var(--app-accent-contrast, #ffffff);
@@ -34,7 +34,7 @@
   --color-line: var(--app-divider, rgba(0, 0, 0, 0.09));
   --color-disabled: var(--app-text-disabled, rgba(0, 0, 0, 0.26));
   --color-action: var(--app-action-active, rgba(0, 0, 0, 0.54));
-  --color-success: var(--app-success, #2e7d32);
+  --color-success: var(--app-success, #fafafa);
   --color-hover: var(--app-hover, rgba(0, 0, 0, 0.04));
   --color-error: var(--app-error, #d32f2f);
   --font-ui: var(--app-font, "Alexandria", system-ui, sans-serif);
@@ -44,7 +44,7 @@
   --radius-tile: 16px;
   --shadow-glass: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
 
-  /* Lumi chrome: the only yellow is the star glyph colour; rank numerals
+  /* Chrome: the only yellow is the star glyph colour; rank numerals
      are gold / silver / bronze, everything else stays monochrome. */
   --color-star: #facc15;
   --color-rank-gold: #facc15;
@@ -194,12 +194,12 @@
 
   /* Horizontal peek row: snap + momentum scrolling, scrollbar hidden by
      the global rule in @layer base. */
-  .lumi-row {
+  .peek-row {
     scroll-snap-type: x proximity;
     -webkit-overflow-scrolling: touch;
     overscroll-behavior-x: contain;
   }
-  .lumi-row > * {
+  .peek-row > * {
     scroll-snap-align: start;
   }
 
@@ -221,7 +221,7 @@
     inset-block: 0;
     left: 0;
     width: 40%;
-    background-color: var(--app-accent, #4caf50);
+    background-color: var(--app-accent, #fafafa);
     border-radius: inherit;
     animation: progress-slide 2.1s cubic-bezier(0.65, 0.8, 0.5, 0.9) infinite;
   }

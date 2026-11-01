@@ -17,7 +17,7 @@ export default function QueuePage() {
   if (!track) {
     return (
       <Container maxWidth="md" className="pt-6">
-        <h5 className="m-0 mb-4 text-2xl font-bold">
+        <h5 className="m-0 mb-4 text-[26px] font-extrabold tracking-[-0.01em]">
           Queue
         </h5>
         <EmptyState

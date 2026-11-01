@@ -36,7 +36,7 @@ function shelfParams(shelf: unknown): string | null {
 function CardGrid({ items, playContext }: { items: Record<string, unknown>[]; playContext?: unknown[] }) {
   const player = usePlayer();
   return (
-    <div className="lumi-row -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 md:-mx-10 md:gap-5 md:px-10">
+    <div className="peek-row -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 md:-mx-10 md:gap-5 md:px-10">
       {items.map((item, index) => (
         <MediaCard
           key={

@@ -4,12 +4,12 @@ import { cn } from '../utils/cn';
 import { ChevronLeftIcon, ChevronRightIcon, GitHubIcon } from './icons';
 
 /**
- * Shared Lumi chrome: section headers, peek-scrolling rows and the
+ * Shared section chrome: section headers, peek-scrolling rows and the
  * minimal footer. No data lives here — every action is passed in by the
  * page, so a header link is never decorative.
  */
 
-/** Lumi section header: bold title left, optional real "See All" action right. */
+/** Section header: bold title left, optional real "See All" action right. */
 export function SectionHeader({
   title,
   subtitle,
@@ -81,7 +81,7 @@ export function RowStrip({
         ref={stripRef}
         aria-label={label}
         onScroll={onScroll}
-        className="lumi-row flex gap-3 overflow-x-auto px-4 pb-2 md:gap-5 md:px-10"
+        className="peek-row flex gap-3 overflow-x-auto px-4 pb-2 md:gap-5 md:px-10"
       >
         {children}
       </div>
@@ -107,8 +107,8 @@ export function RowStrip({
 
 const REPO_URL = 'https://github.com/z44d/carmen';
 
-/** Minimal Lumi footer: brand + tagline left, one small credit right. */
-export function LumiFooter() {
+/** Minimal footer: brand + tagline left, one small credit right. */
+export function AppFooter() {
   return (
     <footer className="mt-10 border-t border-line md:mt-12">
       <div className="flex flex-col gap-3 px-4 py-7 sm:flex-row sm:items-center sm:justify-between md:px-10">

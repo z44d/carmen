@@ -283,7 +283,7 @@ export default function IntroPage() {
   const heroFile = detected ? release.byOs[detected][0] : null;
 
   return (
-    // The landing page is always the black Lumi ground, whatever the app
+    // The landing page is always the black ground, whatever the app
     // theme: the dark palette tokens are pinned on this subtree so every
     // surface, divider and muted label reads on #050505.
     <div
@@ -380,7 +380,7 @@ export default function IntroPage() {
             </Reveal>
             {/* Screenshot strip — the same captures as the feature bands
                 below, in one horizontal peek row. */}
-            <div className="lumi-row mt-6 flex gap-3 overflow-x-auto pb-1">
+            <div className="peek-row mt-6 flex gap-3 overflow-x-auto pb-1">
               <img
                 src={webClientScreenshot}
                 alt="Carmen web client playing an album"

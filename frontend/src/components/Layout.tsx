@@ -73,13 +73,13 @@ function GlassIconButton({
 }
 
 /**
- * Floating Lumi header: a transparent overlay row (no solid bar, no
+ * Floating app header: a transparent overlay row (no solid bar, no
  * wordmark) — circular glass hamburger left, wide glass search pill in the
  * middle, circular glass Queue / Library buttons right. The search pill
  * takes ⌘K / Ctrl+K focus and Enter navigates to the search page. The
  * hamburger opens the slide-in glass drawer below.
  */
-function LumiHeader({
+function AppHeader({
   onOpenDrawer,
 }: {
   onOpenDrawer: () => void;
@@ -337,17 +337,17 @@ export default function Layout() {
     // Fixed-height app window: the root never scrolls (styles.css locks
     // html/body/#root), only `<main>` below does — no rubber-banding, no
     // horizontal document overflow, header pinned as an overlay.
-    // `--lumi-header` is the clearance every page clears and the home hero
+    // `--app-header` is the clearance every page clears and the home hero
     // pulls back up by, so its backdrop reaches the viewport top.
     <div
       className="flex h-dvh overflow-hidden"
-      style={{ '--lumi-header': `calc(var(--sat) + ${HEADER_PX}px)` } as CSSProperties}
+      style={{ '--app-header': `calc(var(--sat) + ${HEADER_PX}px)` } as CSSProperties}
     >
       {/* artwork driven ambient tint (painted behind every surface) —
           low battery mode and the Settings choice skip it entirely */}
       {effectsEnabled && artworkBackground && <AmbientBackground />}
 
-      <LumiHeader onOpenDrawer={() => setDrawerOpen(true)} />
+      <AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
       <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
       <div className="flex min-w-0 flex-1 flex-col">
@@ -359,7 +359,7 @@ export default function Layout() {
           id="app-main"
           ref={scrollerRef}
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
-          style={{ paddingTop: 'var(--lumi-header)', paddingBottom: contentPaddingBottom }}
+          style={{ paddingTop: 'var(--app-header)', paddingBottom: contentPaddingBottom }}
         >
           <Outlet />
         </main>

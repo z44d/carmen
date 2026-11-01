@@ -178,7 +178,7 @@ export default function MediaCard({
     }
   };
 
-  // Lumi cards: square 1:1 artwork with a 12px radius and a hairline
+  // Cards: square 1:1 artwork with a 12px radius and a hairline
   // border; circle artwork is for artist cards only.
   const isArtist = card.kind === 'artist';
 

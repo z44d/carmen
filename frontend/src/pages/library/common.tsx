@@ -165,16 +165,7 @@ export function PlaylistFormDialog({
   };
 
   return (
-    // MIGRATION: the old `slotProps={{ paper: { sx: { borderRadius: 3 } } }}`
-    // (3 × 14px = 42px); the kit panel ships `rounded-card` (14px), so it is
-    // overridden with `!`.
-    <Dialog
-      open={open}
-      onClose={saving ? undefined : onClose}
-      fullWidth
-      maxWidth="xs"
-      className="!rounded-[42px]"
-    >
+    <Dialog open={open} onClose={saving ? undefined : onClose} fullWidth maxWidth="xs">
       <DialogTitle>
         {mode === 'create' ? 'New playlist' : 'Rename playlist'}
         <IconButton

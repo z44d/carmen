@@ -131,7 +131,7 @@ export default function ManageDownloadsPage() {
             <p className="m-0 text-sm text-muted">Nothing has been downloaded yet.</p>
           </div>
         ) : (
-          <List className="rounded-[42px] border border-line bg-surface !py-1">
+          <List className="rounded-[12px] border border-line bg-surface !py-1">
             {songs.map((song) => {
               const checked = selected.has(song.videoId);
               return (
@@ -139,7 +139,7 @@ export default function ManageDownloadsPage() {
                   key={song.videoId}
                   aria-pressed={checked}
                   onClick={() => toggle(song.videoId)}
-                  className="mx-1 !rounded-[28px]"
+                  className="mx-1 !rounded-[12px]"
                 >
                   <span
                     aria-hidden

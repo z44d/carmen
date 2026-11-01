@@ -24,7 +24,7 @@ import { isBatteryLow, useBattery } from './battery';
 
 export const DEFAULT_SETTINGS: AppSettings = {
   themeMode: 'system',
-  accent: '#4CAF50',
+  accent: '#fafafa',
   adaptiveAccent: false,
   font: 'alexandria',
   lyricsProvider: 'auto',

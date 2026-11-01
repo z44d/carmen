@@ -1,31 +1,5 @@
 import type { FontId } from './types/models';
 
-/** One selectable accent of the palette. */
-export interface AccentOption {
-  id: string;
-  name: string;
-  color: string;
-}
-
-/** Accent palette. Green is the default accent. */
-export const ACCENTS: AccentOption[] = [
-  { id: 'green', name: 'Green', color: '#4CAF50' },
-  { id: 'emerald', name: 'Emerald', color: '#10B981' },
-  { id: 'teal', name: 'Teal', color: '#009688' },
-  { id: 'lime', name: 'Lime', color: '#8BC34A' },
-  { id: 'cyan', name: 'Cyan', color: '#00BCD4' },
-  { id: 'blue', name: 'Blue', color: '#2196F3' },
-  { id: 'indigo', name: 'Indigo', color: '#3F51B5' },
-  { id: 'purple', name: 'Purple', color: '#9C27B0' },
-  { id: 'pink', name: 'Pink', color: '#E91E63' },
-  { id: 'red', name: 'Red', color: '#F44336' },
-  { id: 'orange', name: 'Orange', color: '#FF5722' },
-  { id: 'amber', name: 'Amber', color: '#FF9800' },
-  { id: 'white', name: 'White', color: '#ffffff' },
-];
-
-export const DEFAULT_ACCENT = '#4CAF50';
-
 const SYSTEM_FONT =
   '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
@@ -67,11 +41,12 @@ export const DEFAULT_FONT: FontId = 'alexandria';
  * that the Tailwind `@theme` tokens in `styles.css` read (one engine since
  * MUI left).  Editing a colour here restyles the whole app.
  *
- * Lumi look: the dark palette is near-black and flat (`#050505` ground,
+ * Dark look: the dark palette is near-black and flat (`#050505` ground,
  * `#0d0d0f` surfaces, hairline white dividers) with white text and grey
  * secondary text; the light palette is the same layout in readable light
- * tones. The accent picker still drives active states and focus — chrome
- * itself stays monochrome.
+ * tones. There is no coloured accent: the accent token resolves to the
+ * body text colour in both themes, so active states and focus rings wear
+ * the same neutral chrome everywhere.
  */
 const PALETTE = {
   dark: {
@@ -90,7 +65,7 @@ const PALETTE = {
   },
 } as const;
 
-/** Lumi chrome constants — the only yellow in the interface is the star. */
+/** Chrome constants — the only yellow in the interface is the star. */
 export const STAR_YELLOW = '#FACC15';
 
 /** Rank numeral colours for the ranked row (1 gold, 2 silver, 3 bronze). */
@@ -109,11 +84,13 @@ export function cssPalette(mode: 'light' | 'dark'): Record<string, string> {
     '--app-text-secondary': colors.textSecondary,
     '--app-divider': colors.divider,
     // MUI default theme values the Tailwind tokens mirror: disabled text is
-    // identical to action.disabled, action.active and success come from the
-    // stock light/dark palettes, hover is the stock action.hover.
+    // identical to action.disabled, action.active and hover come from the
+    // stock light/dark palettes.
     '--app-text-disabled': mode === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.26)',
     '--app-action-active': mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.54)',
-    '--app-success': mode === 'dark' ? '#4caf50' : '#2e7d32',
+    // Success wears the body text colour — the system has no coloured
+    // accent, so success is a check/icon, not a hue.
+    '--app-success': colors.text,
     '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
     // MUI error.main — the one severity colour `buildTheme` never overrode.
     '--app-error': mode === 'dark' ? '#f44336' : '#d32f2f',

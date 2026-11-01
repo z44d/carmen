@@ -1,14 +1,16 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { IconButton, Spinner, Tooltip } from '../components/ui';
+import { IconButton, Shimmer, Spinner, Tooltip } from '../components/ui';
 import type { ReactNode } from 'react';
 import { usePlayer } from '../player/PlayerContext';
+import { apiGet } from '../api';
 import { RECENT_LIMIT, shuffleList, useLibrary } from '../utils/library';
+import { homeRowSongs, normalizeHomeRows, type HomeSuggestionRow } from '../utils/home';
 import { normalizeTrack } from '../utils/track';
 import { formatTime } from '../utils/format';
 import type { Track } from '../types/models';
 import Artwork from '../components/Artwork';
-import { LumiFooter, RowStrip, SectionHeader } from '../components/Lumi';
+import { AppFooter, RowStrip, SectionHeader } from '../components/Sections';
 import MediaCard from '../components/MediaCard';
 import type { MediaCardPlaySong } from '../components/MediaCard';
 import NPFavorite from '../components/NPFavorite';
@@ -22,7 +24,7 @@ const PULL_DISTANCE = 90;
 /** Hero auto-rotation interval. */
 const HERO_INTERVAL_MS = 6000;
 
-/** Max hero slides (Lumi's 7-up strip). */
+/** Max hero slides (7-up strip). */
 const HERO_LIMIT = 7;
 
 /**
@@ -63,7 +65,7 @@ function heroMeta(track: Track): ReactNode {
 }
 
 /**
- * Full-bleed hero carousel (Lumi): the artwork fills the viewport-height
+ * Full-bleed hero carousel: the artwork fills the viewport-height
  * section under a bottom+left scrim, content sits bottom-left, Play starts
  * playback, Details opens the song, the heart saves it, the 7-up thumbnail
  * strip jumps between slides and the dot pill paginates. Auto-rotation
@@ -114,8 +116,8 @@ function HeroCarousel({
   return (
     <section
       aria-label="Featured songs"
-      className="relative h-[78svh] min-h-[540px] overflow-hidden md:h-[92svh]"
-      style={{ marginTop: 'calc(var(--lumi-header) * -1)' }}
+      className="relative h-[88svh] min-h-[600px] overflow-hidden md:h-[92svh]"
+      style={{ marginTop: 'calc(var(--app-header) * -1)' }}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
       onFocus={() => setPaused(true)}
@@ -138,7 +140,7 @@ function HeroCarousel({
           />
         </div>
       ))}
-      {/* Lumi scrims: dark at the bottom and the left, clear at the top. */}
+      {/* Hero scrims: dark at the bottom and the left, clear at the top. */}
       <div
         aria-hidden
         className="absolute inset-0"
@@ -150,7 +152,7 @@ function HeroCarousel({
 
       <div
         className="relative z-10 flex h-full flex-col justify-end px-4 pb-5 md:px-10"
-        style={{ paddingTop: 'var(--lumi-header)' }}
+        style={{ paddingTop: 'var(--app-header)' }}
       >
         <div className="max-w-[640px]">{heroMeta(track)}</div>
         <h1 className="m-0 mt-3 max-w-[640px] text-[34px] font-extrabold leading-[1.05] tracking-[-0.02em] text-white [text-wrap:balance] sm:text-5xl md:text-6xl">
@@ -277,8 +279,9 @@ function SuggestionStrip({ items, onPlaySong, songsContext }: FeedCardsProps) {
  * Top of the page is the personal feed, entirely cached on the client:
  * the 10 most recently played songs and up to 100 suggested songs harvested
  * from the related list of everything the user plays (shuffled on every
- * visit). The curated YouTube Music rows that used to sit underneath were
- * removed: the personal feed is all this page shows.
+ * visit). Underneath it sit the server's curated suggestion rows
+ * (`GET /browsing/home`), so a fresh visitor with no local feed still
+ * sees suggested songs — including in the hero carousel.
  *
  * The feed is shown as a **snapshot**: starting a song writes to the library
  * in the background, but the cards never reshuffle under the reader.  The
@@ -298,9 +301,38 @@ export default function HomePage() {
     suggestions: library.suggestions,
   }));
 
+  // Server suggestion rows (`GET /browsing/home`, cached 1h server-side):
+  // fetched once per mount and again on refresh, never hammered. A failed
+  // fetch leaves the rows empty and only logs a warning — the page falls
+  // back to the local feed, or to the empty state with its search CTA.
+  const [serverRows, setServerRows] = useState<HomeSuggestionRow[]>([]);
+  const [serverLoading, setServerLoading] = useState(true);
+  const [serverEpoch, setServerEpoch] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    setServerLoading(true);
+    apiGet('/browsing/home', { limit: 6 })
+      .then((payload) => {
+        if (cancelled) return;
+        setServerRows(normalizeHomeRows(payload));
+        setServerLoading(false);
+      })
+      .catch((error) => {
+        if (cancelled) return;
+        console.warn('[home] server suggestions failed', error);
+        setServerRows([]);
+        setServerLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [serverEpoch]);
+
   const refresh = useCallback(() => {
     setFeed({ recent: [...library.recent], suggestions: [...library.suggestions] });
     setShuffleSeed((value) => value + 1);
+    setServerEpoch((value) => value + 1);
     setRefreshing(true);
   }, [library]);
 
@@ -366,7 +398,13 @@ export default function HomePage() {
     [recentTracks, suggestedTracks],
   );
 
+  // Playable songs across the server rows, for the hero fallback and
+  // for song play context inside the server strips.
+  const serverSongs = useMemo(() => homeRowSongs(serverRows), [serverRows]);
+
   // Hero slides: recents first, then suggestions, de-duplicated, max 7.
+  // With no local feed at all, the server rows' songs take the hero, so
+  // a fresh visitor still sees the big suggested artwork.
   const heroTracks = useMemo(() => {
     const seen = new Set<string>();
     const picked: Track[] = [];
@@ -376,8 +414,16 @@ export default function HomePage() {
       picked.push(track);
       if (picked.length >= HERO_LIMIT) break;
     }
+    if (picked.length === 0) {
+      for (const track of serverSongs) {
+        if (seen.has(track.videoId)) continue;
+        seen.add(track.videoId);
+        picked.push(track);
+        if (picked.length >= HERO_LIMIT) break;
+      }
+    }
     return picked;
-  }, [recentTracks, suggestedTracks]);
+  }, [recentTracks, suggestedTracks, serverSongs]);
 
   const hasPersonalFeed = recentTracks.length > 0 || suggestedTracks.length > 0;
 
@@ -391,14 +437,31 @@ export default function HomePage() {
     player.playTrack(track, heroTracks);
   };
 
+  const playFromServer = (raw: Record<string, unknown>) => {
+    const videoId = typeof raw.videoId === 'string' ? raw.videoId : null;
+    const list = [raw, ...serverSongs.filter((entry) => entry.videoId !== videoId)];
+    player.playTrack(raw, list);
+  };
+
+  const showHeroSkeleton = heroTracks.length === 0 && serverLoading;
+
   return (
     <div className="w-full">
       {heroTracks.length > 0 && <HeroCarousel items={heroTracks} onPlay={playHero} />}
+      {showHeroSkeleton && (
+        <div
+          aria-hidden
+          className="relative h-[88svh] min-h-[600px] overflow-hidden md:h-[92svh]"
+          style={{ marginTop: 'calc(var(--app-header) * -1)' }}
+        >
+          <Shimmer variant="rounded" className="absolute inset-0 !rounded-none" />
+        </div>
+      )}
 
       <div className="flex flex-col gap-9 pt-7 md:gap-12 md:pt-9">
         {/* The feed only moves when the reader says so: pull it down on a
             phone, press this on a bigger screen. */}
-        {hasPersonalFeed && (
+        {(hasPersonalFeed || serverRows.length > 0) && (
           <div className="flex justify-end px-4 md:px-10">
             <Tooltip title="Refresh feed" placement="left">
               <span>
@@ -483,7 +546,47 @@ export default function HomePage() {
           </section>
         )}
 
-        {!hasPersonalFeed && (
+        {/* ── Server suggestion rows (always on, below the feed) ────── */}
+        {serverRows.map((row) => {
+          const rowSongs = row.items
+            .map((item) => normalizeTrack(item))
+            .filter((entry): entry is Track => entry !== null);
+          return (
+            <section key={row.title} aria-label={row.title}>
+              <SectionHeader
+                title={row.title}
+                onSeeAll={rowSongs.length >= 2 ? () => player.playAll(rowSongs, 0) : undefined}
+              />
+              <RowStrip label={row.title}>
+                {row.items.map((item, index) => (
+                  <MediaCard
+                    key={`${row.title}-${index}`}
+                    item={item}
+                    width={160}
+                    songsContext={serverSongs}
+                    onPlaySong={playFromServer}
+                  />
+                ))}
+              </RowStrip>
+            </section>
+          );
+        })}
+
+        {/* While the server rows load, skeletons — never a blank page. */}
+        {serverLoading && serverRows.length === 0 && !showHeroSkeleton && (
+          <section aria-label="Loading suggestions">
+            <div className="mb-3 px-4 md:px-10">
+              <Shimmer variant="rounded" width={160} height={22} />
+            </div>
+            <div className="flex gap-3 overflow-hidden px-4 md:gap-5 md:px-10">
+              {[0, 1, 2, 3, 4].map((index) => (
+                <Shimmer key={index} variant="rounded" width={160} height={212} className="shrink-0" />
+              ))}
+            </div>
+          </section>
+        )}
+
+        {!hasPersonalFeed && serverRows.length === 0 && !serverLoading && (
           <div className="px-4">
             <EmptyState
               title="Nothing here yet"
@@ -503,7 +606,7 @@ export default function HomePage() {
         )}
       </div>
 
-      <LumiFooter />
+      <AppFooter />
     </div>
   );
 }

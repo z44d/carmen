@@ -97,7 +97,7 @@ export default function LibraryPage() {
     }
   }, []);
 
-  // MIGRATION: the kit Tabs strip became Lumi pills below — same tab ids,
+  // MIGRATION: the kit Tabs strip became pill buttons below — same tab ids,
   // same sessionStorage behaviour, no underline strip.
   const handleTabChange = (next: LibraryTab) => {
     selectTab(next);
@@ -112,12 +112,12 @@ export default function LibraryPage() {
         </span>
       </div>
 
-      {/* Lumi pill strip: horizontally scrollable, active pill is the
+      {/* Pill strip: horizontally scrollable, active pill is the
           body colour filled (white on dark, near-black on light). */}
       <div
         role="tablist"
         aria-label="Library sections"
-        className="lumi-row mt-5 flex gap-2 overflow-x-auto px-4 pb-1 md:px-10"
+        className="peek-row mt-5 flex gap-2 overflow-x-auto px-4 pb-1 md:px-10"
       >
         {TAB_IDS.map((id) => {
           const selected = tab === id;

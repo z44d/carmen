@@ -37,8 +37,6 @@ import {
 } from '../../services/spotifyConvert';
 import { Artwork, CheckCircleIcon, CloseIcon } from './glyphs';
 
-export const SPOTIFY_GREEN = '#1DB954';
-
 type Step = 'input' | 'preview' | 'converting' | 'results' | 'saved';
 
 interface SpotifyImportDialogProps {
@@ -55,8 +53,8 @@ export function SpotifyMark({ size = 22, sx }: { size?: number; sx?: { fontSize?
   const rendered = sx?.fontSize ?? size;
   return (
     <svg width={rendered} height={rendered} viewBox="0 0 24 24" aria-hidden focusable="false">
-      <circle cx="12" cy="12" r="12" fill={SPOTIFY_GREEN} />
-      <g fill="none" stroke="#0b0b0b" strokeLinecap="round">
+      <circle cx="12" cy="12" r="12" fill="currentColor" />
+      <g fill="none" stroke="var(--app-bg)" strokeLinecap="round">
         <path d="M7.2 10.4c3.1-1 7.9-.9 10.9 1" strokeWidth="1.7" />
         <path d="M7.9 13.1c2.6-.8 6.4-.7 8.9.9" strokeWidth="1.5" />
         <path d="M8.6 15.6c2.1-.6 5-.5 6.9.7" strokeWidth="1.3" />
@@ -68,7 +66,7 @@ export function SpotifyMark({ size = 22, sx }: { size?: number; sx?: { fontSize?
 /* ── match status furniture ───────────────────────────────────────────── */
 
 const STATUS_META = {
-  matched: { label: 'Matched', color: '#1DB954', bg: 'rgba(29,185,84,0.14)' },
+  matched: { label: 'Matched', color: 'var(--app-text)', bg: 'rgba(128,128,128,0.14)' },
   approximate: { label: 'Close match', color: '#e8a13c', bg: 'rgba(232,161,60,0.14)' },
   not_found: { label: 'No match', color: '#9aa0a6', bg: 'rgba(154,160,166,0.14)' },
   error: { label: 'Failed', color: '#e5484d', bg: 'rgba(229,72,77,0.14)' },
@@ -113,7 +111,7 @@ function RowCheckbox({
         'flex h-6 w-6 shrink-0 cursor-pointer items-center justify-center rounded-[8px] border-2 transition-colors',
         checked ? 'border-transparent' : 'border-line bg-transparent hover:border-muted',
       )}
-      style={checked ? { background: SPOTIFY_GREEN } : undefined}
+      style={checked ? { background: 'var(--app-accent)' } : undefined}
     >
       {checked && (
         <svg width="14" height="14" viewBox="0 0 14 14" aria-hidden>
@@ -144,7 +142,7 @@ function Meter({ value }: { value: number }) {
     >
       <div
         className="h-full rounded-full transition-[width] duration-300 ease-out"
-        style={{ width: `${Math.min(100, Math.max(0, value))}%`, background: SPOTIFY_GREEN }}
+        style={{ width: `${Math.min(100, Math.max(0, value))}%`, background: 'var(--app-accent)' }}
       />
     </div>
   );
@@ -327,12 +325,12 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
   const progressPercent = progress && progress.total > 0 ? (progress.done / progress.total) * 100 : 0;
 
   return (
-    <Dialog open={open} onClose={close} maxWidth="md" className="!rounded-[28px]">
+    <Dialog open={open} onClose={close} maxWidth="md" >
       <DialogTitle className="!pb-1">
         <div className="flex items-center gap-3 pr-10">
           <span
             className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl"
-            style={{ background: 'rgba(29,185,84,0.14)' }}
+            style={{ background: 'rgba(128,128,128,0.14)' }}
           >
             <SpotifyMark size={26} />
           </span>
@@ -376,13 +374,13 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               className="mb-5 overflow-hidden rounded-3xl border border-line px-5 py-6 text-center sm:px-8 sm:py-8"
               style={{
                 background:
-                  'radial-gradient(120% 140% at 50% 0%, rgba(29,185,84,0.16) 0%, rgba(29,185,84,0.03) 55%, transparent 100%)',
+                  'radial-gradient(120% 140% at 50% 0%, rgba(128,128,128,0.16) 0%, rgba(128,128,128,0.03) 55%, transparent 100%)',
               }}
             >
               <div className="mb-3 flex justify-center">
                 <span
                   className="flex h-16 w-16 items-center justify-center rounded-full"
-                  style={{ background: 'rgba(29,185,84,0.16)', boxShadow: '0 0 44px rgba(29,185,84,0.35)' }}
+                  style={{ background: 'rgba(128,128,128,0.16)', boxShadow: '0 0 44px rgba(128,128,128,0.25)' }}
                 >
                   <SpotifyMark size={34} />
                 </span>
@@ -435,7 +433,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
                   <p className="m-0 flex items-center gap-2 text-sm font-semibold">
                     <span
                       className="flex h-6 w-6 items-center justify-center rounded-full text-xs font-bold"
-                      style={{ background: 'rgba(29,185,84,0.16)', color: SPOTIFY_GREEN }}
+                      style={{ background: 'rgba(128,128,128,0.16)', color: 'var(--app-text)' }}
                     >
                       {number}
                     </span>
@@ -518,7 +516,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
             className="py-4"
           >
             <div className="mb-5 text-center">
-              <p className="m-0 text-5xl font-bold tabular-nums leading-none" style={{ color: SPOTIFY_GREEN }}>
+              <p className="m-0 text-5xl font-bold tabular-nums leading-none" style={{ color: 'var(--app-text)' }}>
                 {Math.round(progressPercent)}
                 <span className="text-2xl">%</span>
               </p>
@@ -648,7 +646,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
                       </span>
                       {result.match ? (
                         <span className="block min-w-0 truncate text-xs leading-5 text-muted">
-                          <span style={{ color: SPOTIFY_GREEN }}>→ </span>
+                          <span style={{ color: 'var(--app-text)' }}>→ </span>
                           {matchTitle}
                           {matchArtist && <span> — {matchArtist}</span>}
                         </span>
@@ -680,9 +678,9 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               animate={{ scale: 1 }}
               transition={{ type: 'spring', stiffness: 320, damping: 18 }}
               className="mb-4 inline-flex h-20 w-20 items-center justify-center rounded-full"
-              style={{ background: 'rgba(29,185,84,0.14)' }}
+              style={{ background: 'rgba(128,128,128,0.14)' }}
             >
-              <CheckCircleIcon style={{ fontSize: 44, color: SPOTIFY_GREEN }} />
+              <CheckCircleIcon style={{ fontSize: 44, color: 'var(--app-text)' }} />
             </motion.span>
             <p className="m-0 text-xl font-bold leading-8">Playlist saved</p>
             <p className="mx-auto mt-1 max-w-sm text-sm leading-6 text-muted">
@@ -715,7 +713,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               onClick={() => void fetchPreview()}
               disabled={!linkValid || busy}
               startIcon={busy ? <Spinner size={18} /> : <SpotifyMark size={18} />}
-              className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760] disabled:!bg-hover disabled:!text-disabled"
+              className="!bg-body !text-bg hover:brightness-90 disabled:!bg-hover disabled:!text-disabled"
             >
               {busy ? 'Fetching…' : 'Fetch playlist'}
             </Button>
@@ -726,7 +724,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               onClick={() => void startConversion()}
               disabled={busy}
               startIcon={busy ? <Spinner size={18} /> : <SpotifyMark size={18} />}
-              className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760]"
+              className="!bg-body !text-bg hover:brightness-90"
             >
               Convert to YouTube Music
             </Button>
@@ -742,7 +740,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               onClick={() => void save()}
               disabled={selected.size === 0 || saving}
               startIcon={saving ? <Spinner size={18} /> : undefined}
-              className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760] disabled:!bg-hover disabled:!text-disabled"
+              className="!bg-body !text-bg hover:brightness-90 disabled:!bg-hover disabled:!text-disabled"
             >
               {saving ? 'Saving…' : `Save to library (${selected.size})`}
             </Button>
@@ -753,7 +751,7 @@ export default function SpotifyImportDialog({ open, onClose, onOpenPlaylist }: S
               <Button
                 variant="contained"
                 onClick={() => savedId !== null && onOpenPlaylist(savedId)}
-                className="!bg-[#1DB954] !text-black hover:!bg-[#1ed760]"
+                className="!bg-body !text-bg hover:brightness-90"
               >
                 Open playlist
               </Button>
