@@ -239,7 +239,7 @@ export default function MediaCard({
         </span>
       </div>
       {record.isExplicit === true && (
-        <Chip label="E" size="small" variant="outlined" style={{ height: 18 }} />
+        <Chip label="E" size="small" variant="outlined" className="self-start" style={{ height: 18 }} />
       )}
     </button>
   );

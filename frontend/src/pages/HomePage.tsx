@@ -116,7 +116,7 @@ function HeroCarousel({
   return (
     <section
       aria-label="Featured songs"
-      className="relative h-[88svh] min-h-[600px] overflow-hidden md:h-[92svh]"
+      className="relative h-[92svh] min-h-[620px] overflow-hidden md:h-[92svh]"
       style={{ marginTop: 'calc(var(--app-header) * -1)' }}
       onMouseEnter={() => setPaused(true)}
       onMouseLeave={() => setPaused(false)}
@@ -151,7 +151,7 @@ function HeroCarousel({
       />
 
       <div
-        className="relative z-10 flex h-full flex-col justify-end px-4 pb-5 md:px-10"
+        className="relative z-10 flex h-full flex-col justify-end px-4 pb-6 md:px-10"
         style={{ paddingTop: 'var(--app-header)' }}
       >
         <div className="max-w-[640px]">{heroMeta(track)}</div>
@@ -183,8 +183,10 @@ function HeroCarousel({
           </div>
         </div>
 
-        {/* 7-up thumbnail strip */}
-        <div className="mt-5 flex gap-2.5 overflow-x-auto pb-1">
+        {/* 7-up thumbnail strip: docked inside the hero, rings drawn
+            over the artwork (inset, on a top sibling) so they never
+            clip against the scroll container's edge. */}
+        <div className="mt-5 flex gap-2.5 overflow-x-auto py-1">
           {items.map((item, index) => (
             <button
               key={item.videoId}
@@ -193,18 +195,22 @@ function HeroCarousel({
               aria-label={`Show ${item.title} by ${item.artist}`}
               aria-current={index === active}
               className="relative shrink-0 overflow-hidden rounded-[10px] transition focus-visible:outline-2 focus-visible:outline-white"
-              style={{
-                width: 52,
-                height: 52,
-                outline: index === active ? '2px solid #ffffff' : '1px solid rgba(255,255,255,0.25)',
-                outlineOffset: 1,
-              }}
+              style={{ width: 56, height: 56 }}
             >
               <Artwork
                 src={item.artwork}
                 alt=""
                 iconSize={20}
                 style={{ width: '100%', height: '100%' }}
+              />
+              <span
+                aria-hidden
+                className="pointer-events-none absolute inset-0 rounded-[10px]"
+                style={{
+                  boxShadow: index === active
+                    ? 'inset 0 0 0 2px #ffffff'
+                    : 'inset 0 0 0 1px rgba(255,255,255,0.25)',
+                }}
               />
             </button>
           ))}
@@ -445,43 +451,42 @@ export default function HomePage() {
 
   const showHeroSkeleton = heroTracks.length === 0 && serverLoading;
 
+  // Refresh lives in the first section's header (see below) instead of
+  // a row of its own — a lone button floating in empty space under the
+  // hero was the untidy gap. Same handler, same spinner state.
+  const refreshAction = (
+    <Tooltip title="Refresh feed" placement="left">
+      <span>
+        <IconButton
+          aria-label="Refresh feed"
+          onClick={refresh}
+          disabled={refreshing}
+          className="rounded-full border border-line"
+        >
+          {refreshing ? (
+            <Spinner size={20} />
+          ) : (
+            <RefreshIcon fontSize="small" />
+          )}
+        </IconButton>
+      </span>
+    </Tooltip>
+  );
+
   return (
     <div className="w-full">
       {heroTracks.length > 0 && <HeroCarousel items={heroTracks} onPlay={playHero} />}
       {showHeroSkeleton && (
         <div
           aria-hidden
-          className="relative h-[88svh] min-h-[600px] overflow-hidden md:h-[92svh]"
+          className="relative h-[92svh] min-h-[620px] overflow-hidden md:h-[92svh]"
           style={{ marginTop: 'calc(var(--app-header) * -1)' }}
         >
           <Shimmer variant="rounded" className="absolute inset-0 !rounded-none" />
         </div>
       )}
 
-      <div className="flex flex-col gap-9 pt-7 md:gap-12 md:pt-9">
-        {/* The feed only moves when the reader says so: pull it down on a
-            phone, press this on a bigger screen. */}
-        {(hasPersonalFeed || serverRows.length > 0) && (
-          <div className="flex justify-end px-4 md:px-10">
-            <Tooltip title="Refresh feed" placement="left">
-              <span>
-                <IconButton
-                  aria-label="Refresh feed"
-                  onClick={refresh}
-                  disabled={refreshing}
-                  className="rounded-full border border-line"
-                >
-                  {refreshing ? (
-                    <Spinner size={20} />
-                  ) : (
-                    <RefreshIcon fontSize="small" />
-                  )}
-                </IconButton>
-              </span>
-            </Tooltip>
-          </div>
-        )}
-
+      <div className="flex flex-col gap-8 pt-6 md:gap-12 md:pt-8">
         {/* ── Top played (ranked, from recent plays) ───────────────────── */}
         {recentTracks.length > 0 && (
           <section aria-label="Top played">
@@ -489,6 +494,7 @@ export default function HomePage() {
               title="Top played"
               subtitle="Ranked from your recent plays"
               onSeeAll={() => player.playAll(recentTracks, 0)}
+              action={refreshAction}
             />
             <RowStrip label="Top played">
               {recentTracks.slice(0, 9).map((track, index) => (
@@ -515,6 +521,7 @@ export default function HomePage() {
               onSeeAll={() => player.playAll(suggestedTracks, 0)}
               action={
                 <div className="flex shrink-0 items-center gap-2">
+                  {recentTracks.length === 0 && refreshAction}
                   <button
                     type="button"
                     onClick={() => player.playAll(suggestedTracks, 0)}
@@ -547,7 +554,7 @@ export default function HomePage() {
         )}
 
         {/* ── Server suggestion rows (always on, below the feed) ────── */}
-        {serverRows.map((row) => {
+        {serverRows.map((row, index) => {
           const rowSongs = row.items
             .map((item) => normalizeTrack(item))
             .filter((entry): entry is Track => entry !== null);
@@ -556,6 +563,7 @@ export default function HomePage() {
               <SectionHeader
                 title={row.title}
                 onSeeAll={rowSongs.length >= 2 ? () => player.playAll(rowSongs, 0) : undefined}
+                action={!hasPersonalFeed && index === 0 ? refreshAction : undefined}
               />
               <RowStrip label={row.title}>
                 {row.items.map((item, index) => (

@@ -109,8 +109,10 @@ export default function SongsSection() {
       </PageSummary>
 
       <div className="mb-3 flex flex-wrap items-center gap-2 gap-y-2">
-        {/* Sort: key chips + a direction toggle; the active chip shows ↑ / ↓. */}
-        <div className="flex items-center gap-[6px]">
+        {/* Sort: key chips + a direction toggle; the active chip shows ↑ / ↓.
+            The group never splits: it stays one row and the action
+            buttons drop to their own row on a phone instead. */}
+        <div className="flex shrink-0 flex-nowrap items-center gap-[6px]">
           <SortIcon fontSize="small" sx={{ color: 'text.secondary' }} aria-hidden />
           {SORT_OPTIONS.map((option) => {
             const active = sort === option.key;
@@ -167,7 +169,7 @@ export default function SongsSection() {
           aria-label="Only show favorites"
         />
 
-        <div className="flex gap-2 sm:ml-auto">
+        <div className="flex w-full gap-2 sm:ml-auto sm:w-auto">
           <Button variant="contained" startIcon={<PlayArrowIcon />} disabled={!songs.length} onClick={playAll}>
             Play all
           </Button>

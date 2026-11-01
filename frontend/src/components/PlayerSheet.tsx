@@ -79,9 +79,9 @@ const TAB_CLASS = 'min-h-[50px] min-w-0 !font-semibold';
  * Large / Very large.
  */
 const COVER_MAXW: Record<CoverSize, string> = {
-  default: 'max-w-[min(86vw,392px,44vh)] sm:max-w-[min(60vw,340px)] md:max-w-[min(100%,440px)]',
-  large: 'max-w-[min(88vw,440px,48vh)] sm:max-w-[min(62vw,384px)] md:max-w-[min(100%,500px)]',
-  veryLarge: 'max-w-[min(90vw,488px,52vh)] sm:max-w-[min(64vw,428px)] md:max-w-[min(100%,560px)]',
+  default: 'max-w-[min(86vw,392px,max(200px,calc(100dvh-430px)))] sm:max-w-[min(60vw,340px)] md:max-w-[min(100%,440px)]',
+  large: 'max-w-[min(88vw,440px,max(220px,calc(100dvh-410px)))] sm:max-w-[min(62vw,384px)] md:max-w-[min(100%,500px)]',
+  veryLarge: 'max-w-[min(90vw,488px,max(240px,calc(100dvh-390px)))] sm:max-w-[min(64vw,428px)] md:max-w-[min(100%,560px)]',
 };
 
 /**
@@ -614,7 +614,7 @@ export default function PlayerSheet() {
    * the thing it favourites instead of hiding in the row below.
    */
   const mobileTitleBlock = (
-    <div className="mt-5 flex items-center gap-1 text-left">
+    <div className="mt-4 flex items-center gap-1 text-left">
       <div className="min-w-0 flex-1">{titleMeta('h5')}</div>
       <NPFavorite track={track} />
     </div>
@@ -662,7 +662,7 @@ export default function PlayerSheet() {
    * thumb's arc.
    */
   const mobileActionBar = (
-    <div className="mx-auto mt-4 flex w-full max-w-[440px] items-stretch overflow-hidden rounded-full border border-line bg-surface/60 backdrop-blur-xl">
+    <div className="mx-auto mt-3 flex w-full max-w-[440px] items-stretch overflow-hidden rounded-full border border-line bg-surface/60 backdrop-blur-xl">
       {[
         { label: 'Lyrics', Icon: LyricsIcon, tab: LYRICS_TAB },
         { label: 'Queue', Icon: QueueMusicIcon, tab: QUEUE_TAB },
@@ -816,16 +816,17 @@ export default function PlayerSheet() {
     // the scrubber thumb used to move the whole page under the finger.
     // `overflow-y-auto` alone also computes `overflow-x` to `auto`, which
     // is what let the sheet pan sideways — both axes are locked now. The
-    // layout is sized to fit (the cover caps itself at 44vh), so on a
-    // short screen the bottom simply clips instead of scrolling; the
-    // bottom padding clears the home indicator where the OS reports one
+    // layout is sized to fit (the cover caps itself to a dynamic-viewport
+    // budget that leaves room for the chrome below it), so the action
+    // bar stays on screen even on a short phone; the bottom padding
+    // clears the home indicator where the OS reports one
     <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-[max(env(safe-area-inset-bottom),1rem)] pt-1">
       {artworkBox}
       {mobileTitleBlock}
       {errorAlert}
       {scrubber}
       <NPControls phone />
-      <div className="mt-4">
+      <div className="mt-3">
         <VolumeSlider />
       </div>
       {mobileActionBar}
@@ -834,7 +835,7 @@ export default function PlayerSheet() {
 
   // ── Phone: a panel has taken the screen over ───────────────────────────
   const mobilePanel = (
-    <div className="relative z-[1] flex min-h-0 flex-1 flex-col px-4 py-2">
+    <div className="relative z-[1] flex min-h-0 flex-1 flex-col px-4 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
       {/* compact now-playing card: the song stays visible above the panel,
           and the down arrow folds everything back to the main view */}
       <div className="mb-1 flex shrink-0 flex-row items-center gap-3 rounded-2xl border border-line bg-surface px-[10px] py-2">
@@ -970,7 +971,7 @@ export default function PlayerSheet() {
         // dialog wrapper is a padded flexbox, and a `w-screen` item would
         // otherwise shrink into its padding, leaving a dim strip of the page
         // showing through on both sides.
-        '!h-screen !w-screen !max-h-none !max-w-none !rounded-none !bg-bg shrink-0',
+        '!h-[100dvh] !w-screen !max-h-none !max-w-none !rounded-none !bg-bg shrink-0',
         // Desktop sizes the card down to a panel — unless full screen is on,
         // where it takes the whole viewport (same as the phone sheet).
         !fullScreen &&
