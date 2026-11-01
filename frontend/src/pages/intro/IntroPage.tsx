@@ -1,4 +1,4 @@
-import { useEffect, useState, type ComponentType, type ReactNode } from 'react';
+import { useEffect, useState, type ComponentType, type CSSProperties, type ReactNode } from 'react';
 import { Link } from 'react-router-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 
@@ -11,6 +11,7 @@ import menuBarScreenshot from '../../../../screenshots/media-session-lyrics-in-m
 import { DownloadIcon, GitHubIcon, MusicNoteIcon } from '../../components/icons';
 import type { SvgIconProps } from '../../components/SvgIcon';
 import { RELEASES_PAGE } from '../../services/updateCheck';
+import { cssPalette } from '../../theme';
 import { cn } from '../../utils/cn';
 import { AndroidIcon, AppleIcon, GlobeIcon, LinuxIcon, WindowsIcon } from './OsIcons';
 import {
@@ -39,21 +40,21 @@ const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
 /* ── shared class contracts ──────────────────────────────────────────── */
 
 const BTN_PRIMARY =
-  'inline-flex items-center justify-center gap-2 rounded-full bg-accent px-6 py-3.5 ' +
-  'text-sm font-bold text-accent-contrast no-underline shadow-elev-3 transition ' +
-  'hover:brightness-110 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 ' +
-  'focus-visible:outline-accent sm:text-base';
+  'inline-flex items-center justify-center gap-2 rounded-full bg-white px-6 py-3.5 ' +
+  'text-sm font-bold text-black no-underline shadow-elev-3 transition ' +
+  'hover:brightness-95 active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 ' +
+  'focus-visible:outline-white sm:text-base';
 
 const BTN_GHOST =
-  'inline-flex items-center justify-center gap-2 rounded-full border border-line px-6 py-3.5 ' +
-  'text-sm font-semibold text-body no-underline transition hover:border-accent hover:text-accent ' +
-  'active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-accent ' +
+  'inline-flex items-center justify-center gap-2 rounded-full border border-white/20 bg-white/5 px-6 py-3.5 ' +
+  'text-sm font-semibold text-white no-underline backdrop-blur-md transition hover:border-white/50 ' +
+  'active:scale-[0.98] focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-white ' +
   'sm:text-base';
 
 const FILE_ROW =
   'flex items-center justify-between gap-3 rounded-xl border border-line bg-bg px-4 py-3 ' +
-  'text-body no-underline transition hover:border-accent ' +
-  'focus-visible:outline-2 focus-visible:outline-accent';
+  'text-body no-underline transition hover:border-white/40 ' +
+  'focus-visible:outline-2 focus-visible:outline-white';
 
 /** Per-platform presentation — display name, mark, and the honest footnote. */
 const OS_META: Record<OsId, { name: string; Icon: ComponentType<SvgIconProps>; note?: string }> = {
@@ -158,7 +159,7 @@ function Feature({
   return (
     <Reveal className="grid items-center gap-10 md:grid-cols-2 md:gap-14">
       <div className={cn('flex flex-col items-start gap-4', flip && 'md:order-2')}>
-        <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-accent">{eyebrow}</p>
+        <p className="text-xs font-extrabold uppercase tracking-[0.2em] text-muted">{eyebrow}</p>
         <h2 className="m-0 text-3xl font-extrabold leading-tight tracking-[-0.02em] sm:text-4xl">
           {title}
         </h2>
@@ -194,7 +195,7 @@ function MiniCard({ title, body, href }: { title: string; body: string; href?: s
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-5 text-body no-underline transition hover:border-accent focus-visible:outline-2 focus-visible:outline-accent"
+      className="flex flex-col gap-2 rounded-2xl border border-line bg-surface p-5 text-body no-underline transition hover:border-white/40 focus-visible:outline-2 focus-visible:outline-white"
     >
       {inner}
     </a>
@@ -223,11 +224,11 @@ function DownloadCard({
     <div
       className={cn(
         'relative flex flex-col gap-4 rounded-2xl border bg-surface p-6',
-        isDetected ? 'border-accent' : 'border-line',
+        isDetected ? 'border-white/60' : 'border-line',
       )}
     >
       {isDetected ? (
-        <span className="absolute right-4 top-4 rounded-full bg-accent px-2.5 py-1 text-[11px] font-bold text-accent-contrast">
+        <span className="absolute right-4 top-4 rounded-full bg-white px-2.5 py-1 text-[11px] font-bold text-black">
           Your device
         </span>
       ) : null}
@@ -282,11 +283,17 @@ export default function IntroPage() {
   const heroFile = detected ? release.byOs[detected][0] : null;
 
   return (
-    <div className="h-full overflow-y-auto overscroll-contain bg-bg text-body">
-      {/* ── header ── */}
-      <header className="sticky top-0 z-20 border-b border-line bg-bg/85 backdrop-blur-md">
-        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between px-5 sm:px-8">
-          <Link to="/" className="flex items-center gap-2.5 text-body no-underline">
+    // The landing page is always the black Lumi ground, whatever the app
+    // theme: the dark palette tokens are pinned on this subtree so every
+    // surface, divider and muted label reads on #050505.
+    <div
+      className="h-full overflow-y-auto overscroll-contain bg-[#050505] text-white"
+      style={cssPalette('dark') as CSSProperties}
+    >
+      {/* ── floating glass header ── */}
+      <header className="fixed inset-x-0 top-0 z-20 px-4 pt-3 sm:px-6">
+        <div className="mx-auto flex h-14 max-w-5xl items-center justify-between rounded-full border border-white/10 bg-black/50 px-5 backdrop-blur-xl">
+          <Link to="/" className="flex items-center gap-2.5 text-white no-underline">
             <img src={LOGO_SRC} alt="" className="size-8 rounded-xl" />
             <span className="text-lg font-extrabold tracking-tight">Carmen</span>
           </Link>
@@ -295,12 +302,12 @@ export default function IntroPage() {
               href={REPO_URL}
               target="_blank"
               rel="noreferrer"
-              className="flex items-center gap-1.5 text-sm font-semibold text-muted no-underline transition hover:text-accent"
+              className="flex items-center gap-1.5 text-sm font-semibold text-white/70 no-underline transition hover:text-white"
             >
               <GitHubIcon sx={{ fontSize: 18 }} />
-              GitHub
+              <span className="hidden sm:inline">GitHub</span>
             </a>
-            <Link to="/" className="text-sm font-bold text-accent no-underline">
+            <Link to="/" className="text-sm font-bold text-white no-underline">
               Open app
             </Link>
           </nav>
@@ -312,15 +319,15 @@ export default function IntroPage() {
         <section className="relative overflow-hidden">
           <div
             aria-hidden
-            className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-gradient-to-b from-accent/15 to-transparent"
+            className="pointer-events-none absolute inset-x-0 top-0 h-[420px] bg-gradient-to-b from-white/10 to-transparent"
           />
-          <div className="relative mx-auto max-w-4xl px-6 pb-14 pt-16 text-center sm:pt-24">
+          <div className="relative mx-auto max-w-4xl px-6 pb-14 pt-28 text-center sm:pt-36">
             <Reveal>
               <span className="inline-block rounded-full border border-line bg-surface px-3.5 py-1.5 text-xs font-bold text-muted">
                 Free &amp; open source
               </span>
               <h1 className="mx-auto mt-6 mb-0 max-w-3xl text-4xl font-extrabold leading-[1.05] tracking-[-0.03em] sm:text-6xl">
-                Play anything. <span className="text-accent">Keep it forever.</span>
+                Play anything. Keep it forever.
               </h1>
               <p className="mx-auto mt-6 mb-0 max-w-2xl text-base leading-relaxed text-muted sm:text-lg">
                 Carmen is a free music player for YouTube Music. Stream anything, download it in
@@ -371,6 +378,40 @@ export default function IntroPage() {
                 className="mx-auto max-w-3xl"
               />
             </Reveal>
+            {/* Screenshot strip — the same captures as the feature bands
+                below, in one horizontal peek row. */}
+            <div className="lumi-row mt-6 flex gap-3 overflow-x-auto pb-1">
+              <img
+                src={webClientScreenshot}
+                alt="Carmen web client playing an album"
+                loading="lazy"
+                className="h-28 w-44 shrink-0 rounded-xl border border-white/10 object-cover"
+              />
+              <img
+                src={portraitScreenshot}
+                alt="Carmen in portrait view"
+                loading="lazy"
+                className="h-28 w-44 shrink-0 rounded-xl border border-white/10 object-cover"
+              />
+              <img
+                src={androidHomeScreenshot}
+                alt="Carmen Android home page"
+                loading="lazy"
+                className="h-28 w-44 shrink-0 rounded-xl border border-white/10 object-cover"
+              />
+              <img
+                src={androidLyricsScreenshot}
+                alt="Synced lyrics in the Carmen player"
+                loading="lazy"
+                className="h-28 w-44 shrink-0 rounded-xl border border-white/10 object-cover"
+              />
+              <img
+                src={menuBarScreenshot}
+                alt="Song lyrics shown in the macOS media-session menu bar"
+                loading="lazy"
+                className="h-28 w-44 shrink-0 rounded-xl border border-white/10 object-cover"
+              />
+            </div>
           </div>
         </section>
 
@@ -480,13 +521,13 @@ export default function IntroPage() {
             Free, open source, and built for music that shouldn’t stop when the signal does.
           </p>
           <nav className="flex flex-wrap items-center justify-center gap-x-6 gap-y-2 text-sm font-semibold">
-            <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-muted no-underline transition hover:text-accent">
+            <a href={REPO_URL} target="_blank" rel="noreferrer" className="text-muted no-underline transition hover:text-white">
               GitHub
             </a>
-            <a href={RELEASES_PAGE} target="_blank" rel="noreferrer" className="text-muted no-underline transition hover:text-accent">
+            <a href={RELEASES_PAGE} target="_blank" rel="noreferrer" className="text-muted no-underline transition hover:text-white">
               Releases
             </a>
-            <Link to="/" className="text-muted no-underline transition hover:text-accent">
+            <Link to="/" className="text-muted no-underline transition hover:text-white">
               Web app
             </Link>
           </nav>

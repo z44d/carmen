@@ -1,14 +1,12 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
-import type { ComponentType } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
+import { AnimatePresence, motion } from 'framer-motion';
 
 import { useIsDesktop } from '../hooks';
 import { usePlayer } from '../player/PlayerContext';
 import SmartDownloadWatcher from '../offline/smartDownload';
 import { useArtworkBackground, useEffectsEnabled } from '../settings/store';
-import { useTheme as useAppTheme } from '../theme/ThemeContext';
 import { clearNotice, getDownloadsSnapshot, subscribeDownloads } from '../utils/downloadsStore';
-import { alpha } from '../utils/color';
 import { cn } from '../utils/cn';
 import AmbientBackground from './AmbientBackground';
 import MiniPlayer from './MiniPlayer';
@@ -16,14 +14,16 @@ import PlayerSheet from './PlayerSheet';
 import type { SvgIconProps } from './SvgIcon';
 import { Alert, Snackbar } from './ui';
 import {
+  CloseIcon,
   HomeIcon,
   LibraryIcon,
+  MenuIcon,
   QueueListIcon,
   SearchIcon,
   SettingsIcon,
 } from './icons';
 
-/** One entry of the primary navigation (side drawer and bottom bar). */
+/** One entry of the primary navigation (slide-in drawer). */
 interface NavItem {
   label: string;
   path: string;
@@ -38,95 +38,230 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Settings', path: '/settings', icon: SettingsIcon },
 ];
 
-/** Section-title typography (MUI h6: 1.25rem/1.6/700, tightened tracking). */
-const TITLE_CLS = 'm-0 text-xl font-extrabold leading-[1.6] tracking-[-0.02em]';
+/** Header bar height below the status-bar inset (the hero pulls up by this). */
+const HEADER_PX = 64;
 
-/** The app logo (green tile + note), served from `frontend/public/`. */
+/** The app logo, served from `frontend/public/`. */
 const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
 
-/**
- * Desktop navigation: a compact floating card pinned to the left edge and
- * centred vertically (`fixed left-4 top-1/2 -translate-y-1/2`). Icons only
- * by default — hovering an individual tab expands *that row* to reveal its
- * label (`max-w-0 → max-w-[120px]`, `transition-all duration-300`) and the
- * card grows with it; leaving collapses it again.
- *
- * Color logic: the active tab wears the app accent — via `text-accent`, so
- * it is the *adaptive* accent whenever that setting is on (`--app-accent`
- * tracks the playing artwork) — plus a soft accent glow; hovering an
- * inactive tab colours icon and label with the same accent. Glass follows
- * the same effect switch as every other surface — low battery mode paints
- * solid paper, no blur.
- */
-function FloatingNav() {
-  const location = useLocation();
-  // Glass only while the ambient tint can bleed through: low battery
-  // mode paints the solid paper colour instead (no backdrop-filter).
-  const effectsEnabled = useEffectsEnabled();
-  const { resolved, accentInUse } = useAppTheme();
-  // A white accent painted straight onto the light card would be white on
-  // white — the same fallback the bottom bar uses further down.
-  const whiteOnLight = resolved === 'light' && accentInUse.toLowerCase() === '#ffffff';
+/** Circular dark-glass header button (hamburger / Queue / Library). */
+function GlassIconButton({
+  label,
+  onClick,
+  children,
+  className,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
   return (
-    <nav
-      aria-label="Primary"
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
       className={cn(
-        'fixed left-4 top-1/2 z-[1200] flex w-fit max-w-[236px] -translate-y-1/2 flex-col gap-1',
-        'rounded-2xl border border-line p-2',
+        'glass-pill grid size-11 shrink-0 place-items-center rounded-full shadow-glass transition hover:brightness-125 focus-visible:outline-2 focus-visible:outline-white active:scale-[0.94]',
+        className,
       )}
-      style={{
-        backgroundColor: !effectsEnabled
-          ? 'var(--app-paper)'
-          : resolved === 'dark'
-            ? 'rgba(18,23,20,0.86)'
-            : 'rgba(255,255,255,0.86)',
-        backdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-        WebkitBackdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-        boxShadow: effectsEnabled ? 'var(--shadow-glass)' : 'none',
-      }}
     >
-      {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
-        const active = location.pathname === path;
-        return (
-          <NavLink
-            key={path}
-            to={path}
-            title={label}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              'group flex items-center gap-3 rounded-xl p-3 no-underline',
-              'transition-all duration-300 ease-out',
-              'focus-visible:outline-2 focus-visible:outline-accent',
-              // `text-accent` resolves through `--app-accent`, which the
-              // theme context keeps pointing at the *effective* accent —
-              // stored or adaptive — so the highlight repaints the moment
-              // the artwork color changes.
-              active
-                ? whiteOnLight
-                  ? 'bg-hover text-body'
-                  : 'bg-accent/10 text-accent'
-                : 'text-muted hover:bg-hover hover:text-accent',
-            )}
-            style={
-              active && effectsEnabled && !whiteOnLight
-                ? { boxShadow: `0 0 18px ${alpha('var(--app-accent)', 0.3)}` }
-                : undefined
-            }
+      {children}
+    </button>
+  );
+}
+
+/**
+ * Floating Lumi header: a transparent overlay row (no solid bar, no
+ * wordmark) — circular glass hamburger left, wide glass search pill in the
+ * middle, circular glass Queue / Library buttons right. The search pill
+ * takes ⌘K / Ctrl+K focus and Enter navigates to the search page. The
+ * hamburger opens the slide-in glass drawer below.
+ */
+function LumiHeader({
+  onOpenDrawer,
+}: {
+  onOpenDrawer: () => void;
+}) {
+  const navigate = useNavigate();
+  const location = useLocation();
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [term, setTerm] = useState('');
+
+  // Keep the pill in sync with an arrived search (deep link / artist jump).
+  useEffect(() => {
+    if (location.pathname !== '/search') return;
+    const query = new URLSearchParams(location.search).get('query') || '';
+    setTerm(query);
+  }, [location.pathname, location.search]);
+
+  // ⌘K / Ctrl+K focuses the pill from anywhere in the app.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  const submit = (event: FormEvent) => {
+    event.preventDefault();
+    const query = term.trim();
+    navigate(query ? `/search?query=${encodeURIComponent(query)}` : '/search');
+    inputRef.current?.blur();
+  };
+
+  return (
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100]">
+      {/* readability gradient over the hero backdrop — the pills carry
+          their own glass, this only keeps the top edge legible */}
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-gradient-to-b from-black/45 to-transparent"
+      />
+      <div
+        className="relative flex h-16 items-center gap-2 px-3 sm:gap-2.5 sm:px-4"
+        style={{ paddingTop: 'var(--sat)', height: `calc(${HEADER_PX}px + var(--sat))` }}
+      >
+        <div className="pointer-events-auto flex shrink-0 items-center">
+          <GlassIconButton label="Open menu" onClick={onOpenDrawer}>
+            <MenuIcon />
+          </GlassIconButton>
+        </div>
+        <form
+          onSubmit={submit}
+          role="search"
+          className="pointer-events-auto min-w-0 flex-1 md:mx-auto md:max-w-[560px]"
+        >
+          <div className="glass-pill flex h-11 items-center gap-2 rounded-full px-3.5 shadow-glass transition focus-within:border-white/40">
+            <SearchIcon fontSize="small" className="shrink-0 opacity-80" />
+            <input
+              ref={inputRef}
+              type="search"
+              value={term}
+              onChange={(event) => setTerm(event.target.value)}
+              placeholder="Search songs, albums, artists…"
+              aria-label="Search songs, albums, artists"
+              className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
+            />
+            <kbd className="hidden shrink-0 items-center rounded-md border border-white/25 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white/80 sm:flex">
+              ⌘K
+            </kbd>
+          </div>
+        </form>
+        <div className="pointer-events-auto flex shrink-0 items-center gap-2">
+          <GlassIconButton label="Queue" onClick={() => navigate('/queue')}>
+            <QueueListIcon />
+          </GlassIconButton>
+          <GlassIconButton
+            label="Library"
+            onClick={() => navigate('/library')}
+            className="hidden sm:grid"
           >
-            <Icon className="shrink-0" />
-            {/* label reveal: 0 → 120px on row hover, hidden again on leave */}
-            <span
-              className={cn(
-                'max-w-0 overflow-hidden whitespace-nowrap text-sm font-semibold',
-                'opacity-0 transition-all duration-300 group-hover:max-w-[120px] group-hover:opacity-100',
-              )}
-            >
-              {label}
-            </span>
-          </NavLink>
-        );
-      })}
-    </nav>
+            <LibraryIcon />
+          </GlassIconButton>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/** Slide-in glass drawer: nav items, brand at the bottom. */
+function NavDrawer({
+  open,
+  onClose,
+}: {
+  open: boolean;
+  onClose: () => void;
+}) {
+  const location = useLocation();
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const onKey = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') onClose();
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, [open, onClose]);
+
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            aria-hidden
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            transition={{ duration: 0.2 }}
+            onClick={onClose}
+            className="fixed inset-0 z-[1240] bg-black/60 backdrop-blur-[2px]"
+          />
+          <motion.aside
+            role="dialog"
+            aria-label="Menu"
+            aria-modal="true"
+            initial={{ x: '-104%' }}
+            animate={{ x: 0 }}
+            exit={{ x: '-104%' }}
+            transition={{ type: 'tween', duration: 0.26, ease: [0.2, 0.8, 0.2, 1] }}
+            className="fixed bottom-0 left-0 top-0 z-[1250] flex w-[300px] max-w-[84vw] flex-col border-r border-line bg-surface shadow-glass"
+          >
+            <div className="flex items-center gap-3 px-5 pb-2 pt-[max(20px,var(--sat))]">
+              <img
+                src={LOGO_SRC}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="h-9 w-9 shrink-0 rounded-[11px]"
+              />
+              <span className="min-w-0 flex-1 text-lg font-extrabold tracking-tight">Carmen</span>
+              <button
+                type="button"
+                aria-label="Close menu"
+                onClick={onClose}
+                className="grid size-10 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-hover hover:text-body focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94]"
+              >
+                <CloseIcon />
+              </button>
+            </div>
+            <nav aria-label="Primary" className="flex flex-col gap-1 px-3 pt-3">
+              {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
+                const active = location.pathname === path;
+                return (
+                  <NavLink
+                    key={path}
+                    to={path}
+                    onClick={onClose}
+                    aria-current={active ? 'page' : undefined}
+                    className={cn(
+                      'flex items-center gap-3 rounded-full px-4 py-3 text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                      active
+                        ? 'bg-accent/15 text-accent-fg'
+                        : 'text-body hover:bg-hover',
+                    )}
+                  >
+                    <Icon className="shrink-0" />
+                    {label}
+                  </NavLink>
+                );
+              })}
+            </nav>
+            <div className="mt-auto px-5 pb-[max(20px,env(safe-area-inset-bottom))]">
+              <p className="m-0 border-t border-line pt-4 text-[13px] leading-[1.4] text-muted">
+                Your music, everywhere.
+              </p>
+            </div>
+          </motion.aside>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -162,34 +297,28 @@ function NoticeSnackbars() {
   );
 }
 
-/** App shell: navigation, docked mini player, full player and snackbars. */
+/** App shell: floating header, drawer, docked mini player, full player, snackbars. */
 export default function Layout() {
-  const appTheme = useAppTheme();
   const player = usePlayer();
   const location = useLocation();
-  const navigate = useNavigate();
   const isDesktop = useIsDesktop();
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const showMini = Boolean(player.current);
   // Low battery mode: no ambient artwork layer, no glass surfaces —
   // plain solid ones instead (see useEffectsEnabled). The ambient wash
   // additionally has its own Settings choice (artwork background).
   const effectsEnabled = useEffectsEnabled();
   const artworkBackground = useArtworkBackground();
-  // A white accent painted straight onto the light bar would be white on
-  // white, so the selected label falls back to the plain text colour there.
-  const whiteAccentOnLightBar =
-    appTheme.resolved === 'light' && appTheme.accentInUse.toLowerCase() === '#ffffff';
 
-  const navHeight = 56;
-  const bottomOffset = isDesktop
-    ? showMini
-      ? 'calc(env(safe-area-inset-bottom) + 16px)'
-      : '0px'
-    : `calc(${navHeight}px + env(safe-area-inset-bottom) + ${showMini ? 12 : 6}px)`;
+  // No bottom tab bar anymore: the mini player floats 12–16px above the
+  // bottom edge on every width, and content only reserves room for it.
+  const bottomOffset = showMini
+    ? `calc(env(safe-area-inset-bottom) + ${isDesktop ? 16 : 12}px)`
+    : '0px';
 
   const contentPaddingBottom = isDesktop
     ? `calc(${showMini ? 92 : 24}px + env(safe-area-inset-bottom))`
-    : `calc(${navHeight}px + env(safe-area-inset-bottom) + ${showMini ? 84 : 20}px)`;
+    : `calc(${showMini ? 84 : 20}px + env(safe-area-inset-bottom))`;
 
   // Every navigation starts at the top. `<main>` is the app's only scroller,
   // so it keeps its position across routes — without this, opening Queue,
@@ -207,59 +336,30 @@ export default function Layout() {
   return (
     // Fixed-height app window: the root never scrolls (styles.css locks
     // html/body/#root), only `<main>` below does — no rubber-banding, no
-    // horizontal document overflow, header and nav pinned by the column.
-    <div className="flex h-dvh overflow-hidden">
+    // horizontal document overflow, header pinned as an overlay.
+    // `--lumi-header` is the clearance every page clears and the home hero
+    // pulls back up by, so its backdrop reaches the viewport top.
+    <div
+      className="flex h-dvh overflow-hidden"
+      style={{ '--lumi-header': `calc(var(--sat) + ${HEADER_PX}px)` } as CSSProperties}
+    >
       {/* artwork driven ambient tint (painted behind every surface) —
           low battery mode and the Settings choice skip it entirely */}
       {effectsEnabled && artworkBackground && <AmbientBackground />}
 
-      {isDesktop && <FloatingNav />}
+      <LumiHeader onOpenDrawer={() => setDrawerOpen(true)} />
+      <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
 
-      {/* md+: the floating nav card sits over the left edge, so the whole
-          content column (header included) clears it with a left inset —
-          everything else stays full-bleed below the breakpoint */}
-      <div className="flex min-w-0 flex-1 flex-col md:pl-[84px]">
-        {/* pinned by the flex column, not by `sticky`: the scroll starts at
-            `<main>` below, so the header can never scroll away */}
-        <header
-          className="relative z-[1100] border-b border-line"
-          style={{
-            // Status-bar clearance, owned here (and nowhere else) so the
-            // header's wash paints *under* the status bar instead of
-            // leaving a bare band above it. `--sat` is 0px wherever the
-            // window is not edge-to-edge, so desktop/iOS are untouched.
-            paddingTop: 'var(--sat)',
-            backdropFilter: effectsEnabled ? 'blur(12px)' : 'none',
-            backgroundColor: !effectsEnabled
-              ? 'var(--app-bg)'
-              : appTheme.resolved === 'dark'
-                ? 'rgba(10,13,11,0.72)'
-                : 'rgba(246,247,246,0.78)',
-          }}
-        >
-          <div className="flex min-h-14 items-center gap-2.5 px-4 md:min-h-16">
-            <img
-              src={LOGO_SRC}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="h-7 w-7 shrink-0 rounded-[9px] md:h-8 md:w-8 md:rounded-[10px]"
-            />
-            <h6 className={TITLE_CLS}>
-              {isDesktop
-                ? NAV_ITEMS.find((item) => item.path === location.pathname)?.label || 'Carmen'
-                : 'Carmen'}
-            </h6>
-          </div>
-        </header>
-
+      <div className="flex min-w-0 flex-1 flex-col">
         {/* the app's single vertical scroller — pages lay out inside it;
-            `id="app-main"` lets HomePage's pull-to-refresh read its position */}
+            `id="app-main"` lets HomePage's pull-to-refresh read its position.
+            Top padding clears the floating header; the home hero cancels
+            exactly this amount with a negative margin (see HomePage). */}
         <main
           id="app-main"
           ref={scrollerRef}
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
-          style={{ paddingBottom: contentPaddingBottom }}
+          style={{ paddingTop: 'var(--lumi-header)', paddingBottom: contentPaddingBottom }}
         >
           <Outlet />
         </main>
@@ -268,44 +368,6 @@ export default function Layout() {
       {/* the docked bar would sit under the desktop player drawer, so it
           steps aside while the player is open */}
       {!(isDesktop && player.sheetOpen) && <MiniPlayer bottomOffset={bottomOffset} />}
-
-      {!isDesktop && (
-        <nav
-          className="fixed inset-x-0 bottom-0 z-[1100] flex"
-          style={{
-            height: `calc(${navHeight}px + env(safe-area-inset-bottom))`,
-            paddingBottom: 'env(safe-area-inset-bottom)',
-            borderTop: '1px solid var(--app-divider)',
-            backgroundColor: !effectsEnabled
-              ? 'var(--app-paper)'
-              : appTheme.resolved === 'dark'
-                ? 'rgba(18,23,20,0.9)'
-                : 'rgba(255,255,255,0.9)',
-            backdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-          }}
-        >
-          {NAV_ITEMS.map(({ label, path, icon: Icon }) => (
-            <button
-              key={path}
-              type="button"
-              onClick={() => navigate(path)}
-              className={cn(
-                'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1',
-                'text-xs font-medium transition-colors',
-                'focus-visible:outline-2 focus-visible:outline-accent',
-                location.pathname === path
-                  ? whiteAccentOnLightBar
-                    ? 'text-body'
-                    : 'text-accent'
-                  : 'text-muted',
-              )}
-            >
-              <Icon />
-              <span className="max-w-full truncate">{label}</span>
-            </button>
-          ))}
-        </nav>
-      )}
 
       <PlayerSheet />
       <NoticeSnackbars />

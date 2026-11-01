@@ -66,23 +66,35 @@ export const DEFAULT_FONT: FontId = 'alexandria';
  * colours: `ThemeProvider` publishes them as the `--app-*` custom properties
  * that the Tailwind `@theme` tokens in `styles.css` read (one engine since
  * MUI left).  Editing a colour here restyles the whole app.
+ *
+ * Lumi look: the dark palette is near-black and flat (`#050505` ground,
+ * `#0d0d0f` surfaces, hairline white dividers) with white text and grey
+ * secondary text; the light palette is the same layout in readable light
+ * tones. The accent picker still drives active states and focus — chrome
+ * itself stays monochrome.
  */
 const PALETTE = {
   dark: {
-    bg: '#0a0d0b',
-    paper: '#121714',
-    text: '#f1f4f2',
-    textSecondary: 'rgba(241,244,242,0.62)',
-    divider: 'rgba(255,255,255,0.09)',
+    bg: '#050505',
+    paper: '#0d0d0f',
+    text: '#fafafa',
+    textSecondary: 'rgba(250,250,250,0.62)',
+    divider: 'rgba(255,255,255,0.10)',
   },
   light: {
-    bg: '#f6f7f6',
+    bg: '#fbfbfb',
     paper: '#ffffff',
-    text: '#12160f',
-    textSecondary: 'rgba(18,22,15,0.62)',
+    text: '#111111',
+    textSecondary: 'rgba(17,17,17,0.62)',
     divider: 'rgba(0,0,0,0.09)',
   },
 } as const;
+
+/** Lumi chrome constants — the only yellow in the interface is the star. */
+export const STAR_YELLOW = '#FACC15';
+
+/** Rank numeral colours for the ranked row (1 gold, 2 silver, 3 bronze). */
+export const RANK_COLORS = ['#FACC15', '#D1D5DB', '#D97706'] as const;
 
 /**
  * The palette of a resolved mode as CSS custom properties, applied on
@@ -102,7 +114,7 @@ export function cssPalette(mode: 'light' | 'dark'): Record<string, string> {
     '--app-text-disabled': mode === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.26)',
     '--app-action-active': mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.54)',
     '--app-success': mode === 'dark' ? '#4caf50' : '#2e7d32',
-    '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.04)' : 'rgba(0,0,0,0.04)',
+    '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
     // MUI error.main — the one severity colour `buildTheme` never overrode.
     '--app-error': mode === 'dark' ? '#f44336' : '#d32f2f',
   };

@@ -40,9 +40,16 @@
   --font-ui: var(--app-font, "Alexandria", system-ui, sans-serif);
 
   /* Static design tokens of the Carmen identity (match `buildTheme`). */
-  --radius-card: 14px;
+  --radius-card: 12px;
   --radius-tile: 16px;
-  --shadow-glass: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-glass: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+
+  /* Lumi chrome: the only yellow is the star glyph colour; rank numerals
+     are gold / silver / bronze, everything else stays monochrome. */
+  --color-star: #facc15;
+  --color-rank-gold: #facc15;
+  --color-rank-silver: #d1d5db;
+  --color-rank-bronze: #d97706;
 
   /* MUI's stock elevation table — call sites that said `boxShadow: n` keep
      the exact three-layer drops via `var(--shadow-elev-n)` (values copied
@@ -80,7 +87,7 @@
    * wash-backed surface that reaches the top edge: the shell header
    * (Layout `paddingTop: var(--sat)`) and the player sheet's handle strip
    * (PlayerSheet `pt-[max(10px,var(--sat))]`). The **bottom** inset is
-   * consumed piecemeal — the fixed bottom nav / mini player
+   * consumed piecemeal — the floating mini player
    * (Layout/MiniPlayer) and the player sheet
    * (`pb-[max(env(safe-area-inset-bottom),1rem)]`) already include it — so
    * a bottom pad here would stack double.
@@ -167,6 +174,35 @@
 }
 
 @layer components {
+  /*
+   * Dark glass pill — the floating header controls (hamburger, search,
+   * round icon buttons) and hero buttons that sit over artwork. Dark in
+   * both themes: the header floats over the hero backdrop, so a dark
+   * translucent pill with a hairline light border stays readable there.
+   * Low-battery mode drops the blur at the call site (see Layout).
+   */
+  .glass-pill {
+    background-color: rgba(17, 17, 17, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    color: #ffffff;
+  }
+  .glass-pill::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  /* Horizontal peek row: snap + momentum scrolling, scrollbar hidden by
+     the global rule in @layer base. */
+  .lumi-row {
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .lumi-row > * {
+    scroll-snap-align: start;
+  }
+
   /* MUI `Skeleton` — 11% of the text colour (its stock 0.11 alpha), pulse
      on the wave cadence. Utilities can still repaint it via `bg-*`. */
   .skeleton {

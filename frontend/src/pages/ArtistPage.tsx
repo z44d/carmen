@@ -36,7 +36,7 @@ function shelfParams(shelf: unknown): string | null {
 function CardGrid({ items, playContext }: { items: Record<string, unknown>[]; playContext?: unknown[] }) {
   const player = usePlayer();
   return (
-    <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-5 md:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">
+    <div className="lumi-row -mx-4 flex gap-3 overflow-x-auto px-4 pb-2 md:-mx-10 md:gap-5 md:px-10">
       {items.map((item, index) => (
         <MediaCard
           key={
@@ -47,7 +47,7 @@ function CardGrid({ items, playContext }: { items: Record<string, unknown>[]; pl
                 : String(index)
           }
           item={item}
-          width="100%"
+          width={160}
           songsContext={playContext ?? null}
           onPlaySong={(raw, context) => player.playTrack(raw, context)}
         />
@@ -59,7 +59,7 @@ function CardGrid({ items, playContext }: { items: Record<string, unknown>[]; pl
 function Shelf({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="flex flex-col gap-3">
-      <h6 className="m-0 text-xl font-extrabold leading-[1.6] tracking-[-0.02em]">{title}</h6>
+      <h6 className="m-0 text-[19px] font-bold leading-tight tracking-[-0.01em]">{title}</h6>
       {children}
     </section>
   );
@@ -139,8 +139,8 @@ export default function ArtistPage() {
 
   if (loading) {
     return (
-      <Container maxWidth="lg" className="pt-6">
-        <div className="flex flex-col items-center gap-6 sm:flex-row sm:items-start">
+      <Container maxWidth="lg" className="!px-0 pt-6">
+        <div className="flex flex-col items-center gap-6 px-4 sm:flex-row sm:items-start md:px-10">
           <Shimmer variant="circular" width={180} height={180} />
           <div className="flex-1">
             <Shimmer variant="text" width="50%" height={40} className="mb-[5px]" />
@@ -154,8 +154,10 @@ export default function ArtistPage() {
 
   if (error || !data) {
     return (
-      <Container maxWidth="lg" className="pt-8">
-        <EmptyState title="Could not load this artist" hint={error} />
+      <Container maxWidth="lg" className="!px-0 pt-8">
+        <div className="px-4 md:px-10">
+          <EmptyState title="Could not load this artist" hint={error} />
+        </div>
       </Container>
     );
   }
@@ -178,8 +180,9 @@ export default function ArtistPage() {
     .join('  •  ');
 
   return (
-    <Container maxWidth="lg" className="pt-3 md:pt-6">
-      <IconButton aria-label="Back" onClick={() => navigate(-1)} className="mb-2">
+    <Container maxWidth="lg" className="!px-0 pt-4 md:pt-6">
+      <div className="px-4 md:px-10">
+      <IconButton aria-label="Back" onClick={() => navigate(-1)} className="mb-2 rounded-full border border-line">
         <ArrowBackIcon />
       </IconButton>
 
@@ -189,12 +192,16 @@ export default function ArtistPage() {
           alt=""
           iconSize={64}
           className="h-[160px] w-[160px] shrink-0 sm:h-[200px] sm:w-[200px]"
-          style={{ borderRadius: '50%', boxShadow: 'var(--shadow-elev-4)' }}
+          style={{
+            borderRadius: '50%',
+            border: '1px solid var(--app-divider)',
+            boxShadow: '0 16px 40px rgba(0,0,0,0.30)',
+          }}
         />
         <div className="min-w-0 flex-1">
-          <span className="block text-xs uppercase leading-[2.66] text-muted">Artist</span>
-          <h5 className="m-0 text-2xl font-extrabold">{name}</h5>
-          {metaLine && <span className="mt-2 block text-xs leading-[1.4] text-muted">{metaLine}</span>}
+          <span className="block text-xs font-bold uppercase leading-[2.66] tracking-[0.12em] text-muted">Artist</span>
+          <h5 className="m-0 text-[28px] font-extrabold leading-tight tracking-[-0.01em] md:text-4xl">{name}</h5>
+          {metaLine && <span className="mt-2 block text-[13px] leading-[1.4] text-muted">{metaLine}</span>}
 
           <div className="mt-4 flex flex-row justify-center gap-2 sm:justify-start">
             <Button
@@ -202,13 +209,14 @@ export default function ArtistPage() {
               startIcon={<PlayArrowIcon />}
               disabled={!songs.length}
               onClick={() => player.playAll(songs, 0)}
+              className="!h-10 !rounded-full !bg-body !px-6 !text-[15px] !text-bg hover:!brightness-90"
             >
               Play all
             </Button>
             <Button
               startIcon={<ShuffleIcon />}
               disabled={!songs.length}
-              className="border border-accent/50"
+              className="!h-10 !rounded-full border border-line !bg-transparent !px-5 !text-[15px] !text-body hover:!bg-hover"
               onClick={() => {
                 if (!player.shuffle) player.toggleShuffle();
                 player.playAll(songs, Math.floor(Math.random() * songs.length));
@@ -269,6 +277,7 @@ export default function ArtistPage() {
         {!songs.length && !albumItems.length && !singleItems.length && !videoItems.length && (
           <EmptyState title="Nothing here yet" hint="This artist page has no playable sections." />
         )}
+      </div>
       </div>
     </Container>
   );

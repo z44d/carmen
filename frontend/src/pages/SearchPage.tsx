@@ -212,10 +212,10 @@ export default function SearchPage() {
   }, [history, suggestions, input]);
 
   return (
-    <Container maxWidth="lg" className="pt-4 md:pt-6">
-      <div className="flex flex-col gap-4">
+    <Container maxWidth="lg" className="!px-0 pt-4 md:pt-6">
+      <div className="flex flex-col gap-4 px-4 md:px-10">
         <div>
-          <h5 className="m-0 mb-3 text-2xl font-bold">Search</h5>
+          <h5 className="m-0 mb-3 text-[26px] font-extrabold tracking-[-0.01em]">Search</h5>
           <TextField
             fullWidth
             value={input}
@@ -244,13 +244,13 @@ export default function SearchPage() {
           />
 
           {showSuggestions && entries.length > 0 && (
-            <List className="relative z-[2] mt-1 rounded-[42px] border border-line bg-surface !py-1">
+            <List className="relative z-[2] mt-1 rounded-2xl border border-line bg-surface !py-1">
               {entries.map((entry) => (
                 <ListItemButton
                   key={`${entry.kind}:${entry.text}`}
                   onMouseDown={(event) => event.preventDefault()}
                   onClick={() => submit(entry.text)}
-                  className="mx-1 !rounded-[28px]"
+                  className="mx-1 !rounded-xl"
                 >
                   {/* history keeps the clock; suggestions get the magnifier */}
                   {entry.kind === 'history' ? (
@@ -270,11 +270,13 @@ export default function SearchPage() {
             <Chip
               key={option.id || 'all'}
               label={option.label}
-              variant={filter === option.id ? 'filled' : 'outlined'}
+              variant="outlined"
               onClick={() => setFilter(option.id)}
               className={cn(
-                'flex-shrink-0',
-                filter === option.id && '!border-transparent !bg-accent !text-accent-contrast',
+                'h-9 shrink-0 cursor-pointer !rounded-full !px-4 !text-sm !font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                filter === option.id
+                  ? '!border-transparent !bg-body !text-bg'
+                  : '!border-line !bg-transparent !text-muted hover:!text-body',
               )}
             />
           ))}
@@ -302,17 +304,17 @@ export default function SearchPage() {
 
         {!loading && songs.length > 0 && (
           <div>
-            <p className="m-0 mb-1 text-base font-semibold">Songs</p>
+            <p className="m-0 mb-2 text-[19px] font-bold leading-tight">Songs</p>
             <TrackList tracks={songs} />
           </div>
         )}
 
         {!loading && others.length > 0 && (
           <div>
-            <p className="m-0 mb-2 text-base font-semibold">
+            <p className="m-0 mb-2 text-[19px] font-bold leading-tight">
               {songs.length ? 'More results' : 'Results'}
             </p>
-            <div className="grid grid-cols-[repeat(auto-fill,minmax(140px,1fr))] gap-5 md:grid-cols-[repeat(auto-fill,minmax(170px,1fr))]">
+            <div className="grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-4 md:grid-cols-[repeat(auto-fill,minmax(168px,1fr))] md:gap-5">
               {others.map((item, index) => (
                 <MediaCard
                   key={cardKey(item, index)}

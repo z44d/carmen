@@ -2,6 +2,7 @@ import { useNavigate } from 'react-router-dom';
 
 import { useFlags } from '../db/flags';
 import { primaryArtwork } from '../utils/track';
+import { formatTime } from '../utils/format';
 import Artwork from './Artwork';
 import { Chip } from './ui';
 import { DownloadIcon, HeartFilledIcon, PlayArrowIcon } from './icons';
@@ -90,12 +91,6 @@ export interface MediaCardProps {
   width?: number | string;
 }
 
-/** MUI's default elevation shadows (this theme never overrides them). */
-const ELEVATION_1 =
-  '0px 2px 1px -1px rgba(0, 0, 0, 0.2), 0px 1px 1px 0px rgba(0, 0, 0, 0.14), 0px 1px 3px 0px rgba(0, 0, 0, 0.12)';
-const ELEVATION_3 =
-  '0px 3px 3px -2px rgba(0, 0, 0, 0.2), 0px 3px 4px 0px rgba(0, 0, 0, 0.14), 0px 1px 8px 0px rgba(0, 0, 0, 0.12)';
-
 export default function MediaCard({
   item,
   onPlaySong,
@@ -150,6 +145,26 @@ export default function MediaCard({
     subtitle = record.type;
   }
 
+  // Year comes only from real fields the payload carries — never invented.
+  const yearText =
+    typeof record.year === 'string' && record.year
+      ? record.year.slice(0, 4)
+      : typeof record.releaseDate === 'string' && record.releaseDate
+        ? record.releaseDate.slice(0, 4)
+        : '';
+  const subtitleLine =
+    card.kind === 'artist'
+      ? subtitle
+      : [subtitle, yearText].filter(Boolean).join('  •  ');
+
+  // Duration glass pill (song cards only) — real duration fields only.
+  const durationText =
+    typeof record.duration === 'string' && record.duration
+      ? formatTime(record.duration)
+      : typeof record.length === 'string' && record.length
+        ? formatTime(record.length)
+        : '';
+
   const handleClick = () => {
     if (card.kind === 'song' && onPlaySong) {
       onPlaySong(record, songsContext);
@@ -163,7 +178,9 @@ export default function MediaCard({
     }
   };
 
-  const shape = card.kind === 'song' ? 'rounded' : 'circle';
+  // Lumi cards: square 1:1 artwork with a 12px radius and a hairline
+  // border; circle artwork is for artist cards only.
+  const isArtist = card.kind === 'artist';
 
   // Grid/flex children default to an automatic minimum of their min-content
   // width — a nowrap title would inflate the card over its neighbours and
@@ -176,7 +193,7 @@ export default function MediaCard({
     <button
       type="button"
       onClick={handleClick}
-      className="m-0 flex min-w-0 cursor-pointer snap-start flex-col items-stretch gap-2 border-none bg-transparent p-0 text-left font-ui hover:[&_.card-art]:[transform:scale(1.04)] hover:[&_.card-play]:translate-y-0 hover:[&_.card-play]:opacity-100"
+      className="m-0 flex min-w-0 cursor-pointer snap-start flex-col items-stretch gap-2 border-none bg-transparent p-0 text-left font-ui hover:[&_.card-art]:[transform:scale(1.02)] hover:[&_.card-play]:translate-y-0 hover:[&_.card-play]:opacity-100"
       style={{ width: boxWidth, flex: isFluid ? 'auto' : `0 0 ${boxWidth}` }}
     >
       <div className="relative aspect-square w-full">
@@ -188,9 +205,9 @@ export default function MediaCard({
           style={{
             position: 'absolute',
             inset: 0,
-            borderRadius: shape === 'circle' ? '50%' : 28,
+            borderRadius: isArtist ? '50%' : 12,
+            border: '1px solid var(--app-divider)',
             transition: 'transform 220ms ease',
-            boxShadow: ELEVATION_1,
           }}
         />
         {(isDownloaded || isFavorite) && (
@@ -199,19 +216,21 @@ export default function MediaCard({
             {isFavorite && <HeartFilledIcon sx={{ fontSize: 13 }} />}
           </div>
         )}
+        {card.kind === 'song' && durationText && (
+          <span className="absolute bottom-1.5 left-1.5 rounded-full bg-[rgba(0,0,0,0.62)] px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white backdrop-blur-sm">
+            {durationText}
+          </span>
+        )}
         {card.kind === 'song' && (
-          <div
-            className="card-play absolute bottom-1.5 right-1.5 grid h-9 w-9 translate-y-1.5 place-items-center rounded-full bg-accent text-accent-contrast opacity-0 transition-all duration-200 ease-[ease]"
-            style={{ boxShadow: ELEVATION_3 }}
-          >
+          <div className="card-play absolute bottom-1.5 right-1.5 grid h-9 w-9 translate-y-1.5 place-items-center rounded-full bg-white text-black opacity-0 transition-all duration-200 ease-[ease]">
             <PlayArrowIcon />
           </div>
         )}
       </div>
       <div className="w-full min-w-0">
-        <MarqueeText text={title} variant="body2" sx={{ fontWeight: 600 }} />
-        <span className="block truncate text-xs leading-[1.4] text-muted">
-          {subtitle ||
+        <MarqueeText text={title} variant="body2" sx={{ fontWeight: 600, fontSize: 15 }} />
+        <span className="block truncate text-[13px] leading-[1.4] text-muted">
+          {subtitleLine ||
             (card.kind === 'song'
               ? 'Song'
               : card.kind === 'artist'

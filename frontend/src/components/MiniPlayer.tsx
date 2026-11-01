@@ -2,7 +2,6 @@ import { IconButton, Spinner } from '../components/ui';
 
 import { usePlayhead, usePlayer } from '../player/PlayerContext';
 import { useEffectsEnabled } from '../settings/store';
-import { alpha } from '../utils/color';
 import { cn } from '../utils/cn';
 import Artwork from './Artwork';
 import MarqueeText from './MarqueeText';
@@ -10,16 +9,16 @@ import { ExpandLessIcon, PauseIcon, PlayArrowIcon, SkipNextIcon } from './icons'
 
 /** Props for the docked mini player. */
 export interface MiniPlayerProps {
-  /** CSS length the bar sits above the viewport bottom (nav bar included). */
+  /** CSS length the pill sits above the viewport bottom. */
   bottomOffset: string;
 }
 
 /**
- * Buffered/played rail across the top of the bar.  It owns the playhead
- * subscription, so the 4 Hz ticks repaint these two divs only — artwork,
- * title and the buttons in `MiniPlayer` never re-render per tick.
+ * Buffered/played rail along the bottom edge of the pill. It owns the
+ * playhead subscription, so the 4 Hz ticks repaint these two divs only —
+ * artwork, title and the buttons in `MiniPlayer` never re-render per tick.
  */
-function MiniProgress({ effectsEnabled }: { effectsEnabled: boolean }) {
+function MiniProgress() {
   const { currentTime, duration, buffered: bufferedSecs } = usePlayhead();
   // `duration` is metadata-preferred (see PlayerContext); clamp both rails so
   // an untrustworthy container that plays past the true length can't overflow
@@ -30,18 +29,15 @@ function MiniProgress({ effectsEnabled }: { effectsEnabled: boolean }) {
   const buffered = duration ? Math.min((bufferedSecs / duration) * 100, 100) : 0;
 
   return (
-    <div className="absolute inset-x-0 top-0 h-[3px] bg-[color-mix(in_srgb,var(--app-text)_8%,transparent)]">
+    <div className="absolute inset-x-0 bottom-0 h-[3px] bg-[color-mix(in_srgb,var(--app-text)_8%,transparent)]">
       <div
         className="absolute left-0 top-0 h-full bg-[color-mix(in_srgb,var(--app-text)_20%,transparent)]"
         style={{ width: `${buffered}%` }}
       />
       <div
-        className="absolute left-0 top-0 h-full rounded-[0_3px_3px_0] bg-accent"
+        className="absolute left-0 top-0 h-full bg-body"
         style={{
           width: `${progress}%`,
-          boxShadow: effectsEnabled
-            ? `0 0 8px ${alpha('var(--app-accent)', 0.65)}`
-            : 'none',
           transition: 'width 250ms linear',
         }}
       />
@@ -50,23 +46,19 @@ function MiniProgress({ effectsEnabled }: { effectsEnabled: boolean }) {
 }
 
 /**
- * Compact player docked above the navigation bar. Tapping it opens the full
- * player sheet.
+ * iPhone-style floating mini player pill, docked above the bottom edge.
+ * Tapping it opens the full player sheet.
  *
- * It sits above the navigation chrome (which is why the z-index is just
- * under `modal`) and aligns with the content column on wide screens — the
- * column carries a left inset that clears the floating nav card, so the
- * "Now playing" bar is never hidden behind it.
- *
- * Styling is a floating glass card that follows the current theme — accent
- * progress line on top, circular accent play button — instead of the old
- * hard coded dark strip.
+ * It sits just under `modal` in z-index and centres on wide screens. The
+ * pill is glass in the current theme with a thin progress rail along its
+ * bottom edge, square artwork, and a body-colour filled play circle —
+ * instead of the old hard coded dark strip.
  */
 export default function MiniPlayer({ bottomOffset }: MiniPlayerProps) {
   const player = usePlayer();
   const track = player.current;
-  // The glass card (blur + translucent fill) and the accent glow on the
-  // progress line are the first things low battery mode gives up.
+  // The glass card (blur + translucent fill) is the first thing low
+  // battery mode gives up.
   const effectsEnabled = useEffectsEnabled();
 
   if (!track) return null;
@@ -79,10 +71,9 @@ export default function MiniPlayer({ bottomOffset }: MiniPlayerProps) {
         // `'&:hover .mini-expand'` selector).
         'group fixed z-[1299] cursor-pointer overflow-hidden rounded-[56px] border border-line text-body',
         // mobile keeps the edge insets; on desktop the bar is a centred
-        // pill hugging its content instead of spanning the content column
-        // — the width cap keeps it clear of the floating nav on the left
+        // pill hugging its content
         'left-2 right-2 sm:left-3 sm:right-3',
-        'md:left-1/2 md:right-auto md:w-fit md:max-w-[min(560px,calc(100vw_-_140px))] md:-translate-x-1/2',
+        'md:left-1/2 md:right-auto md:w-fit md:max-w-[min(560px,calc(100vw_-_32px))] md:-translate-x-1/2',
         // solid surface without the glass effect: the fill has to carry the
         // surface on its own once nothing blurs behind it
         effectsEnabled ? 'bg-surface/86' : 'bg-surface',
@@ -95,16 +86,23 @@ export default function MiniPlayer({ bottomOffset }: MiniPlayerProps) {
         WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
       }}
     >
-      {/* buffered (behind) + played (front) progress — leaf component, so
-          per-tick playhead updates never touch the rest of this bar */}
-      <MiniProgress effectsEnabled={effectsEnabled} />
+      {/* buffered (behind) + played (front) progress along the bottom
+          edge — leaf component, so per-tick playhead updates never touch
+          the rest of this bar */}
+      <MiniProgress />
       <div className="flex items-center gap-3 px-[10px] py-1">
         <div className="relative h-11 w-11 shrink-0">
           <Artwork
             src={track.artwork}
             alt=""
             iconSize={20}
-            style={{ width: 44, height: 44, borderRadius: 28, backgroundColor: 'var(--app-hover)' }}
+            style={{
+              width: 44,
+              height: 44,
+              borderRadius: 12,
+              border: '1px solid var(--app-divider)',
+              backgroundColor: 'var(--app-hover)',
+            }}
           />
           {player.buffering && (
             <Spinner size={20} className="absolute inset-0 m-auto" />
@@ -128,7 +126,7 @@ export default function MiniPlayer({ bottomOffset }: MiniPlayerProps) {
             event.stopPropagation();
             player.togglePlay();
           }}
-          className="size-[42px] bg-accent !text-accent-contrast hover:!bg-accent hover:[transform:scale(1.08)] hover:[filter:brightness(1.08)] ![transition:transform_150ms_ease,filter_150ms_ease]"
+          className="size-[42px] !bg-body !text-bg hover:!brightness-90 hover:[transform:scale(1.08)] ![transition:transform_150ms_ease,filter_150ms_ease]"
         >
           {player.isPlaying ? <PauseIcon /> : <PlayArrowIcon />}
         </IconButton>

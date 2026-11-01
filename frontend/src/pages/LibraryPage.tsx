@@ -14,11 +14,9 @@
  */
 import { useCallback, useEffect, useState } from 'react';
 
-import { Container, Tab, Tabs } from '../components/ui';
+import { Container } from '../components/ui';
 import { listDownloads } from '../db/repos/downloads';
-import { useEffectsEnabled } from '../settings/store';
 import type { DownloadedSong } from '../types/models';
-import { cn } from '../utils/cn';
 import AlbumsSection from './library/AlbumsSection';
 import ArtistsSection from './library/ArtistsSection';
 import FavoritesSection from './library/FavoritesSection';
@@ -26,7 +24,6 @@ import PlaylistsSection from './library/PlaylistsSection';
 import PlaylistDetailView from './library/PlaylistDetailView';
 import RecentSection from './library/RecentSection';
 import SongsSection from './library/SongsSection';
-import { LibraryIcon } from './library/glyphs';
 
 /** The six Library tabs, in display order. */
 const TAB_IDS = ['songs', 'favorites', 'artists', 'albums', 'playlists', 'recent'] as const;
@@ -60,7 +57,6 @@ export default function LibraryPage() {
   const [selectedId, setSelectedId] = useState<number | null>(null);
   const [downloads, setDownloads] = useState<DownloadedSong[]>([]);
   const [downloadsLoading, setDownloadsLoading] = useState(true);
-  const effectsEnabled = useEffectsEnabled();
 
   // One read of the offline catalogue feeds the Albums & Artists grouping;
   // the Songs page runs its own sorted query and the detail view swaps the
@@ -101,48 +97,50 @@ export default function LibraryPage() {
     }
   }, []);
 
-  // MIGRATION: the kit Tabs calls `onChange(value)` — no MUI event argument.
-  const handleTabChange = (next: unknown) => {
-    if ((TAB_IDS as readonly string[]).includes(next as string)) {
-      selectTab(next as LibraryTab);
-    }
+  // MIGRATION: the kit Tabs strip became Lumi pills below — same tab ids,
+  // same sessionStorage behaviour, no underline strip.
+  const handleTabChange = (next: LibraryTab) => {
+    selectTab(next);
   };
 
   return (
-    <Container maxWidth="lg" className="pb-8 pt-4 md:pb-12 md:pt-6">
-      <div className="mb-4 flex items-center gap-3">
-        <LibraryIcon color="primary" sx={{ fontSize: 34 }} />
-        <div className="min-w-0">
-          <h5 className="m-0 text-2xl font-extrabold leading-[1.2]">Library</h5>
-          <span className="text-xs leading-[1.4] text-muted">
-            Playlists, downloads and collections on this device
-          </span>
-        </div>
+    <Container maxWidth="lg" className="!px-0 pb-8 pt-4 md:pb-12 md:pt-6">
+      <div className="px-4 md:px-10">
+        <h5 className="m-0 text-[26px] font-extrabold leading-[1.2] tracking-[-0.01em]">Library</h5>
+        <span className="mt-0.5 block text-[13px] leading-[1.4] text-muted">
+          Playlists, downloads and collections on this device
+        </span>
       </div>
 
-      {/* Sticky under the app bar's Toolbar (56/64px); translucent + blurred
-          like the bar itself so rows fade away beneath it while scrolling —
-          the blur drops out in low battery mode (the tint alone still
-          separates it from the rows underneath).
-          MIGRATION: `scrollButtons="auto"` / `allowScrollButtonsMobile` dropped
-          — the kit strip scrolls natively with hidden scrollbars. */}
-      <Tabs
-        value={tab}
-        onChange={handleTabChange}
-        variant="scrollable"
+      {/* Lumi pill strip: horizontally scrollable, active pill is the
+          body colour filled (white on dark, near-black on light). */}
+      <div
+        role="tablist"
         aria-label="Library sections"
-        className={cn(
-          // sticks to the top of `<main>` — the app header sits above the
-          // scrollport (Layout), so no top offset is needed anymore
-          'sticky top-0 mb-5 min-h-[46px] border-b border-line bg-bg/[0.92] dark:bg-bg/[0.88]',
-          effectsEnabled && 'backdrop-blur-[12px]',
-        )}
+        className="lumi-row mt-5 flex gap-2 overflow-x-auto px-4 pb-1 md:px-10"
       >
-        {TAB_IDS.map((id) => (
-          <Tab key={id} value={id} label={TAB_LABELS[id]} className="!font-bold" />
-        ))}
-      </Tabs>
+        {TAB_IDS.map((id) => {
+          const selected = tab === id;
+          return (
+            <button
+              key={id}
+              type="button"
+              role="tab"
+              aria-selected={selected}
+              onClick={() => handleTabChange(id)}
+              className={
+                selected
+                  ? 'h-9 shrink-0 rounded-full bg-body px-4 text-sm font-bold text-bg transition-colors focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97]'
+                  : 'h-9 shrink-0 rounded-full border border-line px-4 text-sm font-semibold text-muted transition-colors hover:text-body focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97]'
+              }
+            >
+              {TAB_LABELS[id]}
+            </button>
+          );
+        })}
+      </div>
 
+      <div className="px-4 pt-4 md:px-10">
       {/* Exactly one page mounted at a time. */}
       {selectedId !== null ? (
         <PlaylistDetailView playlistId={selectedId} onBack={handleBack} />
@@ -156,6 +154,7 @@ export default function LibraryPage() {
           {tab === 'recent' && <RecentSection />}
         </>
       )}
+      </div>
     </Container>
   );
 }

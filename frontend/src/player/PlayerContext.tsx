@@ -63,6 +63,9 @@ export interface PlayerContextValue {
   retry: () => void;
   shuffle: boolean;
   repeat: RepeatMode;
+  /** Playback volume, 0 (muted) to 1 (full) — drives the `<audio>` element. */
+  volume: number;
+  setVolume: (value: number) => void;
   sheetOpen: boolean;
   setSheetOpen: (open: boolean) => void;
   playTrack: (rawTrack: unknown, contextTracks?: unknown[] | null, options?: { openSheet?: boolean }) => void;
@@ -159,6 +162,41 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   const [shuffle, setShuffle] = useState(false);
   const [repeat, setRepeat] = useState<RepeatMode>('off'); // off | all | one
   const [sheetOpen, setSheetOpen] = useState(false);
+
+  // ── Volume ────────────────────────────────────────────────────────────
+  // Real volume for the single `<audio>` element (the iPhone-style player
+  // slider in the sheet). Read once from localStorage so a relaunch keeps
+  // the last level; a blocked store simply falls back to full volume.
+  const VOLUME_KEY = 'carmen.volume';
+  const [volume, setVolumeState] = useState<number>(() => {
+    try {
+      // getItem returns null on first launch; Number(null) is 0, which
+      // would silently start every new user muted — treat "no stored
+      // value" as full volume explicitly.
+      const raw = window.localStorage.getItem(VOLUME_KEY);
+      if (raw === null) return 1;
+      const stored = Number(raw);
+      return Number.isFinite(stored) ? Math.min(Math.max(stored, 0), 1) : 1;
+    } catch {
+      return 1;
+    }
+  });
+  const volumeRef = useRef(volume);
+  const setVolume = useCallback((next: number) => {
+    const clamped = Math.min(Math.max(next, 0), 1);
+    volumeRef.current = clamped;
+    setVolumeState(clamped);
+    try {
+      window.localStorage.setItem(VOLUME_KEY, String(clamped));
+    } catch {
+      /* persistence is best-effort */
+    }
+  }, []);
+  // Apply to the element whenever the level changes (the element itself
+  // persists across tracks, so one effect covers every source swap).
+  useEffect(() => {
+    if (audioRef.current) audioRef.current.volume = volume;
+  }, [volume]);
   /** True once the startup restore finished — persistence starts then. */
   const [restored, setRestored] = useState(false);
 
@@ -515,6 +553,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       if (cancelled) return;
       sourceRef.current = source;
       if (source.kind === 'stream') void fillStreamCache(current.videoId);
+      audio.volume = volumeRef.current;
       audio.src = source.url;
       audio.load();
       const attempt = audio.play();
@@ -819,6 +858,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     if (source.kind === 'stream') void fillStreamCache(videoId);
     sourceRef.current = source;
     setBuffering(true);
+    audio.volume = volumeRef.current;
     audio.src = source.url;
     audio.load();
     const attempt = audio.play();
@@ -893,6 +933,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       retry,
       shuffle,
       repeat,
+      volume,
+      setVolume,
       sheetOpen,
       setSheetOpen,
       playTrack,
@@ -923,6 +965,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       retry,
       shuffle,
       repeat,
+      volume,
+      setVolume,
       sheetOpen,
       playTrack,
       playAll,
@@ -961,8 +1005,8 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       <PlayheadContext.Provider value={playhead}>
         {children}
       </PlayheadContext.Provider>
-      {/* No volume control: the element plays at full level and the OS mixer
-          owns loudness, so the player keeps no volume state at all. */}
+      {/* Volume lives in context state (`volume` / `setVolume`) and is
+          applied to this element by effect — the sheet's slider owns it. */}
       <audio
         ref={audioRef}
         preload="auto"
