@@ -1,0 +1,26 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Carmen — white quaver, © z44d (github.com/z44d) -->
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="185dp"
+    android:height="185dp"
+    android:viewportWidth="185"
+    android:viewportHeight="185">
+
+    <!-- stem -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M97.1,53.7 h9 v75.9 h-9 z" />
+    <!-- flag -->
+    <path
+        android:fillColor="#ffffff"
+        android:pathData="M106.1,54.2 C117.3,58.6 126.4,74.9 126.4,101 L118.2,101 C118.2,77.6 111.9,63.6 106.1,60 Z" />
+    <!-- head -->
+    <group
+        android:rotation="-20"
+        android:pivotX="71.9"
+        android:pivotY="128.5">
+        <path
+            android:fillColor="#ffffff"
+            android:pathData="M45.7,128.5 a26.2,20.2 0 1 0 52.4,0 a26.2,20.2 0 1 0 -52.4,0 z" />
+    </group>
+</vector>

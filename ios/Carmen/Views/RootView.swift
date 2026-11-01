@@ -1,12 +1,15 @@
 //
 //  RootView.swift
-//  Carmen — the five-tab shell (Home / Search / Queue / Library / Settings),
-//  the floating mini player and the full Now Playing overlay.
+//  Carmen — the Material 3 shell: three tabs (Home / Search / Library)
+//  behind a floating pill nav, with the mini player stacked on top of the
+//  pill as one merged blob (Android's CONNECTED navigation bar) and the
+//  full player as an overlay driven by Player.expansion (0 = parked below
+//  the screen, 1 = full).
 //
-//  Each tab owns its own NavigationStack; the mini player floats above the
-//  tab bar. The full player is an overlay driven by the Player's
-//  `expansion` (0 = parked below screen on the mini bar, 1 = full) so it can
-//  be dragged open and closed interactively.
+//  The native tab bar is hidden; screens pin their own TopAppBar and the
+//  blob is a bottom safeAreaInset, so every tab's scroll content ends
+//  above the bar instead of sliding under it. Settings is not a tab — it
+//  is the overflow sheet each root screen owns.
 //
 
 import SwiftUI
@@ -16,10 +19,32 @@ struct RootView: View {
 
     @State private var selectedTab: Tab = .home
 
-    /// Matches the frontend's drawer order: Home, Search, Queue, Library,
-    /// Settings — the queue is navigation, not player chrome.
     enum Tab: Hashable {
-        case home, search, queue, library, settings
+        case home, search, library
+
+        var title: String {
+            switch self {
+            case .home: "Home"
+            case .search: "Search"
+            case .library: "Library"
+            }
+        }
+
+        var symbol: String {
+            switch self {
+            case .home: "house"
+            case .search: "magnifyingglass"
+            case .library: "square.stack"
+            }
+        }
+
+        var activeSymbol: String {
+            switch self {
+            case .home: "house.fill"
+            case .search: "magnifyingglass"
+            case .library: "square.stack.fill"
+            }
+        }
     }
 
     var body: some View {
@@ -29,52 +54,38 @@ struct RootView: View {
                     HomeView()
                         .carmenDestinations()
                 }
-                .tabItem { Label("Home", systemImage: "house") }
+                .toolbar(.hidden, for: .tabBar)
                 .tag(Tab.home)
 
                 NavigationStack {
                     SearchView()
                         .carmenDestinations()
                 }
-                .tabItem { Label("Search", systemImage: "magnifyingglass") }
+                .toolbar(.hidden, for: .tabBar)
                 .tag(Tab.search)
-
-                NavigationStack {
-                    QueueTabView()
-                        .carmenDestinations()
-                }
-                .tabItem { Label("Queue", systemImage: "list.bullet") }
-                .tag(Tab.queue)
 
                 NavigationStack {
                     LibraryView()
                         .carmenDestinations()
                 }
-                .tabItem { Label("Library", systemImage: "square.stack") }
+                .toolbar(.hidden, for: .tabBar)
                 .tag(Tab.library)
-
-                NavigationStack {
-                    SettingsView(embeddedInTab: true)
-                }
-                .tabItem { Label("Settings", systemImage: "gearshape") }
-                .tag(Tab.settings)
             }
-
-            // Mini player floats just above the tab bar when something is
-            // queued — it cross-fades out as the full player expands over it.
-            if player.hasQueue {
-                MiniPlayer()
-                    .padding(.horizontal, 8)
-                    .padding(.bottom, 49)  // tab bar height + margin
+            .safeAreaInset(edge: .bottom, spacing: 0) {
+                FloatingNavBlob(selectedTab: $selectedTab)
+                    .padding(.horizontal, 12)
+                    .padding(.bottom, 6)
+                    // Cross-fades out as the full player expands over it
+                    // (old mini-player math, now on the whole blob).
                     .opacity(player.showNowPlaying ? max(0, 1 - player.expansion * 2) : 1)
                     .scaleEffect(player.showNowPlaying ? max(0.92, 1 - player.expansion * 0.08) : 1)
-                    .transition(.move(edge: .bottom).combined(with: .opacity))
             }
 
-            // Full player: slides up from the mini bar's position — mounted at
-            // expansion 0, then animated to 1 (openPlayer), and drag-tracked
-            // back down inside NowPlayingView. Fixed travel (taller than any
-            // iPhone) so the view is fully parked off-screen at expansion 0.
+            // Full player: slides up from the mini bar's position — mounted
+            // at expansion 0, then animated to 1 (openPlayer), and
+            // drag-tracked back down inside NowPlayingView. Fixed travel
+            // (taller than any iPhone) so the view is fully parked
+            // off-screen at expansion 0.
             if player.showNowPlaying {
                 NowPlayingView()
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -111,11 +122,94 @@ struct RootView: View {
             // (covers the offline-play → reconnect repro).
             if online { player.retryIfBroken() }
         }
+        // Material scheme for the whole shell — keep this the OUTERMOST
+        // modifier so the floating bar, the banner overlay and every screen
+        // below receive the live roles.
+        .m3Theme()
+    }
+}
+
+/// The floating bottom bar: the nav pill with the mini player stacked on
+/// top when something is queued — Android's CONNECTED navigation bar. One
+/// blob in `surfaceContainer`; radii lerp 32 (standalone) → 28 (merged)
+/// with mini-player proximity, exactly like the Compose original.
+private struct FloatingNavBlob: View {
+    @Binding var selectedTab: RootView.Tab
+
+    @Environment(Player.self) private var player
+    @Environment(\.m3) private var m3
+
+    /// 0 = pill alone, 1 = mini player seated on it (miniPlayerProximity).
+    private var proximity: CGFloat { player.hasQueue ? 1 : 0 }
+
+    /// Android's FloatingBarStandaloneCornerRadius (32) → …Outer (28).
+    private var outerRadius: CGFloat { 32 - 4 * proximity }
+
+    var body: some View {
+        VStack(spacing: 0) {
+            if player.hasQueue {
+                MiniPlayer()
+                    .transition(.opacity)
+            }
+            pill
+        }
+        .frame(maxWidth: 420)  // NavigationBarMaxWidth
+        .background(
+            m3.surfaceContainer,
+            in: RoundedRectangle(cornerRadius: outerRadius, style: .continuous)
+        )
+        .clipShape(RoundedRectangle(cornerRadius: outerRadius, style: .continuous))
+        .shadow(color: .black.opacity(0.12), radius: 12, y: 4)
+    }
+
+    private var pill: some View {
+        HStack(spacing: 0) {
+            ForEach([RootView.Tab.home, .search, .library], id: \.self) { tab in
+                pillItem(tab)
+            }
+        }
+        .frame(maxWidth: 360)  // NavigationItemsMaxWidth
+        .padding(.vertical, 8)  // NavigationItemVerticalPadding
+        .frame(maxWidth: .infinity)
+        .frame(height: M3Dim.navPill)  // NavigationBarHeight = 78
+    }
+
+    private func pillItem(_ tab: RootView.Tab) -> some View {
+        let selected = selectedTab == tab
+        return Button {
+            selectedTab = tab
+        } label: {
+            VStack(spacing: 3) {
+                Image(systemName: selected ? tab.activeSymbol : tab.symbol)
+                    .font(.title3)
+                    .frame(width: 56, height: 32)
+                    .background {
+                        // M3 active indicator — the icon pill.
+                        if selected {
+                            Capsule().fill(m3.secondaryContainer)
+                        }
+                    }
+                Text(tab.title)
+                    .font(.m3LabelMedium)
+                    .lineLimit(1)
+                    .minimumScaleFactor(0.7)
+                    .frame(maxWidth: .infinity)
+            }
+            .foregroundStyle(selected ? m3.onSurface : m3.onSurfaceVariant)
+            .frame(maxWidth: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .pressScale()
+        .accessibilityLabel(tab.title)
+        .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }
 
 /// Transient banner explaining why playback stopped — retry or dismiss.
 private struct ErrorBanner: View {
+    @Environment(\.m3) private var m3
+
     let message: String
     let retry: () -> Void
     let dismiss: () -> Void
@@ -125,18 +219,19 @@ private struct ErrorBanner: View {
             Image(systemName: "exclamationmark.triangle.fill")
                 .foregroundStyle(.yellow)
             Text(message)
-                .font(.footnote)
+                .font(.m3BodySmall)
+                .foregroundStyle(m3.onSurface)
                 .lineLimit(2)
             Spacer(minLength: 4)
             Button("Retry", action: retry)
-                .font(.footnote.weight(.semibold))
+                .font(.m3LabelLarge)
                 .buttonStyle(.bordered)
                 .buttonBorderShape(.capsule)
                 .controlSize(.small)
             Button(action: dismiss) {
                 Image(systemName: "xmark")
-                    .font(.footnote.weight(.semibold))
-                    .foregroundStyle(.secondary)
+                    .font(.m3LabelLarge)
+                    .foregroundStyle(m3.onSurfaceVariant)
                     .frame(width: 28, height: 28)
                     .contentShape(Rectangle())
             }
@@ -144,7 +239,7 @@ private struct ErrorBanner: View {
             .accessibilityLabel("Dismiss")
         }
         .padding(12)
-        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .background(.regularMaterial, in: M3Shape.sheet)
         .shadow(color: .black.opacity(0.15), radius: 10, y: 4)
     }
 }

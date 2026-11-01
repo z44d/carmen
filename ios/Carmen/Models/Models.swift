@@ -266,7 +266,7 @@ struct Track: Codable, Hashable, Identifiable, Sendable {
 
 /// What a card points at — drives both tap handling and tile art.
 enum CardKind: String, Codable, Sendable {
-    case song, album, artist, playlist, station, unsupported
+    case song, album, artist, playlist, station, podcast, unsupported
 }
 
 /// Any heterogeneous API item: a song, album, artist, playlist or radio card
@@ -317,7 +317,11 @@ struct MediaCard: Decodable, Hashable, Identifiable, Sendable {
         // carry no resultType at all).
         let kind: CardKind
         switch resultType {
-        case "podcast", "episode":
+        // Podcast shows still carry no usable media item here (episodes do
+        // not play through /watch) — only the show itself is navigable.
+        case "podcast":
+            kind = .podcast
+        case "episode":
             kind = .unsupported
         case "song", "video":
             kind = videoId != nil ? .song : .unsupported
@@ -360,6 +364,8 @@ struct MediaCard: Decodable, Hashable, Identifiable, Sendable {
             } else {
                 targetId = browseId ?? radioId ?? ""
             }
+        case .podcast:
+            targetId = playlistId ?? browseId ?? ""
         case .unsupported:
             targetId = videoId ?? browseId ?? playlistId ?? ""
         }
@@ -372,6 +378,8 @@ struct MediaCard: Decodable, Hashable, Identifiable, Sendable {
             subtitle = "Artist"
         case .playlist, .station:
             subtitle = author ?? artistLine
+        case .podcast:
+            subtitle = author ?? description ?? artistLine
         case .unsupported:
             subtitle = description ?? author ?? artistLine
         }
@@ -580,4 +588,42 @@ struct TrackDetail: Codable, Sendable {
         try container.encodeIfPresent(genre, forKey: .genre)
         try container.encodeIfPresent(description, forKey: .description)
     }
+}
+
+// MARK: - Podcasts
+
+/// `/podcasts/podcast/{playlistId}` — a show's metadata plus its episodes
+/// (episodes decode as ordinary `Track`s so the player can queue them).
+struct PodcastDetail: Decodable, Sendable {
+    var title: String
+    var author: String
+    var description: String?
+    var artworkURL: String?
+    var episodes: [Track]
+
+    private enum CodingKeys: String, CodingKey {
+        case title, name, author, description, thumbnails, episodes
+    }
+
+    init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        title = (try? c.decodeIfPresent(String.self, forKey: .title)) ?? ""
+        if title.isEmpty { title = (try? c.decodeIfPresent(String.self, forKey: .name)) ?? "" }
+        author = (try? c.decodeIfPresent(String.self, forKey: .author)) ?? ""
+        description = (try? c.decodeIfPresent(String.self, forKey: .description)) ?? nil
+        let thumbs = (try? c.decodeIfPresent([Thumbnail].self, forKey: .thumbnails)) ?? nil
+        artworkURL = pickArtwork(thumbs)
+        episodes = c.decodeSkippingFailures(Track.self, forKey: .episodes)
+    }
+}
+
+/// A podcast show saved on-device for the Library's Podcasts tab (the API is
+/// read-only, so subscriptions — like favorites and playlists — are local).
+struct SavedPodcast: Codable, Hashable, Identifiable, Sendable {
+    let playlistId: String
+    let title: String
+    let author: String
+    let artwork: String?
+
+    var id: String { playlistId }
 }

@@ -37,6 +37,7 @@ final class LibraryStore {
         static let playlists = "library.playlists"
         static let searchHistory = "library.searchHistory"
         static let suggestions = "library.suggestions"
+        static let podcasts = "library.podcasts"
     }
 
     private static let maxRecents = 10
@@ -50,6 +51,7 @@ final class LibraryStore {
     private var _playlists: [LocalPlaylist]
     private var _searchHistory: [String]
     private var _suggestions: [Track]
+    private var _podcasts: [SavedPodcast]
 
     // MARK: Observable API (each mutation persists)
 
@@ -78,6 +80,28 @@ final class LibraryStore {
         }
     }
 
+    /// Podcast shows saved from search results (Library → Podcasts).
+    var podcasts: [SavedPodcast] {
+        get { _podcasts }
+        set {
+            _podcasts = newValue
+            save(Key.podcasts, newValue)
+        }
+    }
+
+    func isPodcastSaved(_ playlistId: String) -> Bool {
+        _podcasts.contains { $0.playlistId == playlistId }
+    }
+
+    /// Save/unsave a show; newest first, like the web client's podcast subs.
+    func togglePodcast(_ podcast: SavedPodcast) {
+        if isPodcastSaved(podcast.playlistId) {
+            podcasts = _podcasts.filter { $0.playlistId != podcast.playlistId }
+        } else {
+            podcasts = [podcast] + _podcasts.filter { $0.playlistId != podcast.playlistId }
+        }
+    }
+
     var searchHistory: [String] {
         get { _searchHistory }
         set {
@@ -103,6 +127,7 @@ final class LibraryStore {
         _playlists = Self.load([LocalPlaylist].self, forKey: Key.playlists) ?? []
         _searchHistory = Self.load([String].self, forKey: Key.searchHistory) ?? []
         _suggestions = Self.load([Track].self, forKey: Key.suggestions) ?? []
+        _podcasts = Self.load([SavedPodcast].self, forKey: Key.podcasts) ?? []
     }
 
     // MARK: Favorites

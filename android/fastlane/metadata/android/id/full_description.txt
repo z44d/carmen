@@ -1,0 +1,7 @@
+Carmen is a modern, beautiful music player for YouTube Music and your local library — no account needed.
+
+Listen to millions of tracks with synced lyrics, music recognition, dynamic themes, listening statistics, offline downloads, Discord Rich Presence, widgets, live playback notifications with animated artwork and much more. Carmen's smart suggestions continuously learn from what you play and keep a fresh personal feed on the home screen.
+
+Carmen runs entirely without a YouTube Music account: when YouTube Music endpoints are unavailable, the built-in server access (api-carmen-v1.syr.qzz.io by z44d) keeps search, playback streams, radio queues and track details working.
+
+<b>Carmen is a fork of ArchiveTune by Rukamori</b> (github.com/rukamori/ArchiveTune) — thanks to the original authors for their great work. Carmen is released under the GNU GPL v3.
