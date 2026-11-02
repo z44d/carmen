@@ -23,7 +23,6 @@ import {
 import { emitTrayState, isTauri, onTrayAction } from '../platform/env';
 import { useSettings } from '../settings/store';
 import type {
-  LyricsProvider,
   RepeatMode,
   Track,
   TrackLyrics,
@@ -200,7 +199,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   /** True once the startup restore finished — persistence starts then. */
   const [restored, setRestored] = useState(false);
 
-  const { lyricsProvider } = useSettings();
+  // Lyrics chain preferences (Android model): order + enable switches +
+  // the optional Paxsenix key. Any change re-fetches the current song's
+  // lyrics under the new chain; the old single-provider key is no longer
+  // read here (it lives on only as a migrated setting).
+  const { lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey } = useSettings();
 
   // While "Adaptive accent color" is on, the cover of the playing song sets
   // the theme's accent (see theme/adaptiveAccent).
@@ -610,7 +613,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
     let cancelled = false;
-    const provider: LyricsProvider = lyricsProvider || 'auto';
+    const chainOptions = {
+      order: lyricsProviderOrder,
+      enabled: lyricsProvidersEnabled,
+      ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+    };
 
     const mergeLocal = async (payload: TrackMeta | null): Promise<TrackMeta | null> => {
       try {
@@ -625,7 +632,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
 
     const fetchRemote = (): void => {
-      fetchTrackMeta(videoId, provider)
+      fetchTrackMeta(videoId, chainOptions)
         .then(async (payload) => {
           if (cancelled) return;
           setMeta(await mergeLocal(payload));
@@ -684,7 +691,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [current?.videoId, lyricsProvider]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [current?.videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const videoId = current?.videoId;

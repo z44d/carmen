@@ -12,13 +12,15 @@ import { listDownloads } from '../db/repos/downloads';
 import { notify } from '../utils/downloadsStore';
 import { formatBytes } from '../utils/format';
 import { appCacheSize, clearAppCache } from '../utils/streamCache';
-import { LYRICS_PROVIDERS } from '../types/models';
+import { LYRICS_CHAIN } from '../types/models';
+import { isProviderEnabled, normalizeProviderOrder } from '../utils/lyricsProviders';
 import type { ArtworkPlacement, CoverSize, FontId, LyricsSize, ThemeMode } from '../types/models';
 import {
-  CheckIcon,
   DarkModeIcon,
   DevicePhoneMobileIcon,
   DownloadIcon,
+  ExpandLessIcon,
+  ExpandMoreIcon,
   GitHubIcon,
   InfoIcon,
   LightModeIcon,
@@ -268,7 +270,9 @@ export default function SettingsPage() {
   const {
     themeMode,
     font,
-    lyricsProvider,
+    lyricsProviderOrder,
+    lyricsProvidersEnabled,
+    paxsenixApiKey,
     lyricsSize,
     apiBase,
     lowBatteryMode: lowBatteryManual,
@@ -682,38 +686,91 @@ export default function SettingsPage() {
 
           <div className="px-4 py-4">
             <p className="m-0 mb-2 text-sm font-semibold leading-[1.43]">
-              Lyrics provider
+              Lyrics providers
+            </p>
+            <p className="m-0 mb-3 text-xs leading-[1.4] text-muted">
+              The order is the preference order — the first enabled provider wins
+              ties, and the best-quality result across enabled providers is used.
             </p>
             <div className="flex flex-col gap-1">
-              {LYRICS_PROVIDERS.map((provider) => {
-                const selected = lyricsProvider === provider.id;
+              {normalizeProviderOrder(lyricsProviderOrder).map((providerId, index, order) => {
+                const provider = LYRICS_CHAIN.find((entry) => entry.id === providerId) ?? {
+                  id: providerId,
+                  label: providerId,
+                };
+                const enabled = isProviderEnabled(lyricsProvidersEnabled, providerId);
+                const move = (delta: -1 | 1) => {
+                  const next = [...order];
+                  const target = index + delta;
+                  if (target < 0 || target >= next.length) return;
+                  [next[index], next[target]] = [next[target], next[index]];
+                  updateSettings({ lyricsProviderOrder: next });
+                };
                 return (
-                  <button
+                  <div
                     key={provider.id}
-                    type="button"
-                    onClick={() => updateSettings({ lyricsProvider: provider.id })}
-                    aria-pressed={selected}
-                    className={cn(
-                      'flex w-full cursor-pointer items-center justify-between gap-3',
-                      'rounded-[12px] border-0 px-[10px] py-[6px] text-left text-body hover:bg-hover',
-                      selected && 'bg-hover',
-                    )}
+                    className="flex w-full items-center gap-2 rounded-[12px] px-[10px] py-[6px] hover:bg-hover"
                   >
-                    <div className="min-w-0">
-                      <p className="m-0 text-sm font-semibold leading-[1.43]">
-                        {provider.label}
-                      </p>
-                      {provider.id === 'auto' && (
-                        <span className="block text-xs leading-[1.4] text-muted">
-                          YouTube first, then the best public source
-                        </span>
-                      )}
-                    </div>
-                    {selected && <CheckIcon color="primary" sx={{ fontSize: 18 }} />}
-                  </button>
+                    <span className="w-5 shrink-0 text-center text-xs font-semibold leading-[1.4] text-muted">
+                      {index + 1}
+                    </span>
+                    <p className="m-0 min-w-0 flex-1 text-sm font-semibold leading-[1.43]">
+                      {provider.label}
+                    </p>
+                    <button
+                      type="button"
+                      aria-label={`Move ${provider.label} up`}
+                      disabled={index === 0}
+                      onClick={() => move(-1)}
+                      className="grid size-8 shrink-0 place-items-center rounded-full text-body transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94] disabled:opacity-30"
+                    >
+                      <ExpandLessIcon />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${provider.label} down`}
+                      disabled={index === order.length - 1}
+                      onClick={() => move(1)}
+                      className="grid size-8 shrink-0 place-items-center rounded-full text-body transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94] disabled:opacity-30"
+                    >
+                      <ExpandMoreIcon />
+                    </button>
+                    <Switch
+                      checked={enabled}
+                      onChange={(_, checked) =>
+                        updateSettings({
+                          lyricsProvidersEnabled: { ...lyricsProvidersEnabled, [providerId]: checked },
+                        })
+                      }
+                      inputProps={{ 'aria-label': `Enable ${provider.label}` }}
+                      className="shrink-0"
+                    />
+                  </div>
                 );
               })}
             </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <p className="m-0 mb-2 text-sm font-semibold leading-[1.43]">
+              Paxsenix API key
+            </p>
+            <p className="m-0 mb-3 text-xs leading-[1.4] text-muted">
+              Required for the three Paxsenix providers above — without it they
+              are skipped. The key is sent with lyrics requests only, and is
+              never shown anywhere else.
+            </p>
+            <TextField
+              type="password"
+              label={paxsenixApiKey ? 'Paxsenix API key configured' : 'Paxsenix API key'}
+              value={paxsenixApiKey}
+              onChange={(event) => updateSettings({ paxsenixApiKey: event.target.value })}
+              inputProps={{ 'aria-label': 'Paxsenix API key', autoComplete: 'off' }}
+              fullWidth
+            />
+            <span className="mt-1 block text-xs leading-[1.4] text-muted">
+              {paxsenixApiKey ? 'A key is saved.' : 'No key set.'}
+            </span>
           </div>
         </Section>
 

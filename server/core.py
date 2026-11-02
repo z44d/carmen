@@ -849,6 +849,113 @@ def _syncedlyrics_lrc(
     return None
 
 
+def _lyrics_chain_ids() -> set:
+    """Ids of the new provider chain (``server/lyrics`` registry)."""
+    try:
+        from .lyrics import PROVIDER_IDS
+    except Exception:  # noqa: BLE001 — httpx missing etc: chain unavailable
+        return set()
+    return set(PROVIDER_IDS)
+
+
+def _run_lyrics_chain(
+    video_id: str | None,
+    title: str,
+    artist: str,
+    album: str,
+    duration: int | None,
+    lyrics_order: list[str] | None,
+    lyrics_enabled: set[str] | None,
+    paxsenix_key: str | None,
+):
+    """Best result from the new provider chain, or ``None`` on any failure."""
+    try:
+        from .lyrics.chain import run_chain
+    except Exception:  # noqa: BLE001
+        return None
+    try:
+        return run_chain(
+            video_id,
+            title,
+            artist,
+            album,
+            duration,
+            lyrics_order=lyrics_order,
+            lyrics_enabled=lyrics_enabled,
+            paxsenix_key=paxsenix_key,
+        )
+    except Exception:  # noqa: BLE001 — a chain failure must never break track
+        return None
+
+
+def get_provider_lyrics(
+    video_id: str | None = None,
+    title: str = "",
+    artist: str = "",
+    album: str = "",
+    duration: int | None = None,
+    lyrics_order: list[str] | None = None,
+    lyrics_enabled: set[str] | None = None,
+    paxsenix_key: str | None = None,
+) -> dict:
+    """
+    Every chain provider's parsed lyrics for a track (the picker path).
+
+    Returns ``{"results": [...]}``; see :func:`server.lyrics.chain.
+    run_chain_all` for the entry shape. When the chain cannot run at all,
+    every provider is still listed with null lyrics and its availability.
+    """
+    try:
+        from .lyrics import is_available, resolve_order
+        from .lyrics.chain import run_chain_all
+    except Exception:  # noqa: BLE001
+        return {"results": []}
+    try:
+        return {
+            "results": run_chain_all(
+                video_id,
+                title,
+                artist,
+                album,
+                duration,
+                lyrics_order=lyrics_order,
+                lyrics_enabled=lyrics_enabled,
+                paxsenix_key=paxsenix_key,
+            )
+        }
+    except Exception:  # noqa: BLE001
+        order = resolve_order(lyrics_order, lyrics_enabled)
+        from .lyrics import get_name
+
+        return {
+            "results": [
+                {
+                    "provider": provider_id,
+                    "name": get_name(provider_id),
+                    "available": is_available(provider_id, paxsenix_key),
+                    "synced": None,
+                    "unsynced": None,
+                    "quality": None,
+                    "source": None,
+                }
+                for provider_id in order
+            ]
+        }
+
+
+def translate_lyrics(text: str, target: str) -> str:
+    """
+    Translate a lyrics text into *target* (a language code or alias name).
+
+    Only ever called on an explicit user action — never from the default
+    lyrics chain. Raises :class:`server.lyrics.translate.TranslationError`
+    for unsupported languages and translation-service failures.
+    """
+    from .lyrics.translate import translate_lyrics_text
+
+    return translate_lyrics_text(text, target)
+
+
 def _collect_lyrics(
     browse_id: str | None,
     title: str = "",
@@ -856,24 +963,36 @@ def _collect_lyrics(
     album: str = "",
     duration: int | None = None,
     provider: str | None = None,
+    lyrics_order: list[str] | None = None,
+    lyrics_enabled: set[str] | None = None,
+    paxsenix_key: str | None = None,
+    video_id: str | None = None,
 ) -> dict:
     """
     Fetch both the synced and the plain lyrics for a lyrics browse id.
 
-    Three sources are tried, in order:
+    Sources are tried, in order:
 
-    1. the mobile innertube ``browse`` endpoint, which is the only one that
+    1. the new provider chain (``server/lyrics`` — the Android providers
+       ported to the server), in the requested order / enabled set;
+    2. the mobile innertube ``browse`` endpoint, which is the only one that
        returns line timestamps (``ytmusicapi``'s own timed call fails with
        HTTP 400 because it pairs the web ``Authorization`` header with a
        mobile client context — see :func:`_browse_mobile`);
-    2. ``ytmusicapi``'s plain lyrics endpoint for the unsynced text;
-    3. the ``syncedlyrics`` library, which returns an LRC document (timestamped
-       per line) from public providers, so a track still gets karaoke style
-       lyrics when YouTube does not expose timestamps.
+    3. ``ytmusicapi``'s plain lyrics endpoint for the unsynced text;
+    4. the ``syncedlyrics`` library, which returns an LRC document
+       (timestamped per line) from public providers, so a track still gets
+       karaoke style lyrics when YouTube does not expose timestamps.
 
-    When ``provider`` names a specific source (a :data:`LYRICS_PROVIDERS`
-    key), the YouTube steps are skipped entirely and **only** that provider is
-    consulted — the client's "Lyrics Provider" setting maps onto this.
+    When ``provider`` names a specific source, the YouTube steps are
+    skipped entirely and **only** that provider is consulted — the
+    client's "Lyrics Provider" setting maps onto this. That holds both
+    for a legacy :data:`LYRICS_PROVIDERS` key (whose behaviour is kept
+    exactly as before) and for a new chain id (only that chain provider
+    runs). A chain result sets ``synced`` (extended lines), ``unsynced``,
+    ``source`` (provider display name) and ``provider`` (provider id);
+    the older ``synced`` / ``unsynced`` / ``source`` shape is unchanged
+    for old clients, the new keys are purely additive.
 
     :param browse_id: lyrics browse id (``MPLYt…``) taken from the watch panel
     :param title: track title, used by the fallback lookup
@@ -881,6 +1000,12 @@ def _collect_lyrics(
     :param album: album name, used by the fallback lookup
     :param duration: track duration in seconds, used by the fallback lookup
     :param provider: force a single lyrics provider (``None`` = default chain)
+    :param lyrics_order: chain provider ids in the order to consult them
+    :param lyrics_enabled: chain provider ids to consult (``None`` = all)
+    :param paxsenix_key: Paxsenix API key supplied with the request; never
+        logged or cached — only forwarded to the gated Paxsenix providers
+    :param video_id: YouTube video id, needed by the video-id providers
+        (SimpMusic, Unison) in the chain
     """
     lyrics = {"browseId": browse_id, "synced": None, "unsynced": None, "source": None}
 
@@ -897,8 +1022,42 @@ def _collect_lyrics(
                 lyrics["source"] = LYRICS_PROVIDERS[provider]
         return lyrics
 
-    if browse_id:
-        payload = _browse_mobile(browse_id)
+    if provider in _lyrics_chain_ids():
+        chain_result = _run_lyrics_chain(
+            video_id,
+            title,
+            artist,
+            album,
+            duration,
+            [provider],
+            {provider},
+            paxsenix_key,
+        )
+        if chain_result:
+            lyrics["synced"] = chain_result["synced"]
+            lyrics["unsynced"] = chain_result["unsynced"]
+            lyrics["source"] = chain_result["name"]
+            lyrics["provider"] = chain_result["provider"]
+        return lyrics
+
+    chain_result = _run_lyrics_chain(
+        video_id,
+        title,
+        artist,
+        album,
+        duration,
+        lyrics_order,
+        lyrics_enabled,
+        paxsenix_key,
+    )
+    if chain_result:
+        lyrics["synced"] = chain_result["synced"]
+        lyrics["unsynced"] = chain_result["unsynced"]
+        lyrics["source"] = chain_result["name"]
+        lyrics["provider"] = chain_result["provider"]
+
+    if browse_id and (not lyrics["synced"] or not lyrics["unsynced"]):
+        payload = _browse_mobile(browse_id) if not lyrics["synced"] else None
         if payload:
             data = _dig(payload, _TIMED_LYRICS_PATH)
             raw_lines = data.get("timedLyricsData") if isinstance(data, dict) else None
@@ -934,7 +1093,13 @@ def _collect_lyrics(
     return lyrics
 
 
-def get_track(video_id: str, provider: str | None = None) -> dict:
+def get_track(
+    video_id: str,
+    provider: str | None = None,
+    lyrics_order: list[str] | None = None,
+    lyrics_enabled: set[str] | None = None,
+    paxsenix_key: str | None = None,
+) -> dict:
     """
     Build one fully enriched payload for a single track.
 
@@ -944,8 +1109,13 @@ def get_track(video_id: str, provider: str | None = None) -> dict:
     playback and the offline library — from a single request.
 
     :param video_id: YouTube video ID
-    :param provider: force a lyrics provider (see :data:`LYRICS_PROVIDERS`);
-                     ``None`` keeps the default resolution chain
+    :param provider: force a lyrics provider (see :data:`LYRICS_PROVIDERS`
+                     or a ``server/lyrics`` chain id); ``None`` keeps the
+                     default resolution chain
+    :param lyrics_order: chain provider ids in the order to consult them
+    :param lyrics_enabled: chain provider ids to consult (``None`` = all)
+    :param paxsenix_key: Paxsenix API key for the gated providers; never
+                         logged or cached
     :raises DurationLimitExceeded: if the track is longer than one hour
     """
     watch: dict = {}
@@ -1035,6 +1205,10 @@ def get_track(video_id: str, provider: str | None = None) -> dict:
             album=album.get("name") if isinstance(album, dict) else str(album or ""),
             duration=seconds,
             provider=provider,
+            lyrics_order=lyrics_order,
+            lyrics_enabled=lyrics_enabled,
+            paxsenix_key=paxsenix_key,
+            video_id=video_id,
         ),
         "playlistId": watch.get("playlistId"),
         "relatedBrowseId": watch.get("related"),

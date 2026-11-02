@@ -1,6 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
-import { AnimatePresence, motion } from 'framer-motion';
 
 import { useIsDesktop } from '../hooks';
 import { usePlayer } from '../player/PlayerContext';
@@ -14,16 +13,15 @@ import PlayerSheet from './PlayerSheet';
 import type { SvgIconProps } from './SvgIcon';
 import { Alert, Snackbar } from './ui';
 import {
-  CloseIcon,
+  GitHubIcon,
   HomeIcon,
   LibraryIcon,
-  MenuIcon,
   QueueListIcon,
   SearchIcon,
   SettingsIcon,
 } from './icons';
 
-/** One entry of the primary navigation (slide-in drawer). */
+/** One entry of the primary navigation. */
 interface NavItem {
   label: string;
   path: string;
@@ -38,13 +36,22 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Settings', path: '/settings', icon: SettingsIcon },
 ];
 
+/** Phone bottom navigation: everything except Queue (the header keeps it). */
+const BOTTOM_NAV_ITEMS: NavItem[] = NAV_ITEMS.filter((item) => item.path !== '/queue');
+
 /** Header bar height below the status-bar inset (the hero pulls up by this). */
 const HEADER_PX = 64;
 
-/** The app logo, served from `frontend/public/`. */
-const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
+/** Height of the phone bottom navigation bar (safe-area padding extra). */
+const BOTTOM_NAV_PX = 56;
 
-/** Circular dark-glass header button (hamburger / Queue / Library). */
+/** The app logo (SVG master in `frontend/public/`; PNG renders ship alongside). */
+const LOGO_SRC = `${import.meta.env.BASE_URL}logo.svg`;
+
+/** The upstream repository, linked from the bottom of the sidebar. */
+const REPO_URL = 'https://github.com/z44d/carmen';
+
+/** Circular dark-glass header button (Queue). */
 function GlassIconButton({
   label,
   onClick,
@@ -74,16 +81,13 @@ function GlassIconButton({
 
 /**
  * Floating app header: a transparent overlay row (no solid bar, no
- * wordmark) — circular glass hamburger left, wide glass search pill in the
- * middle, circular glass Queue / Library buttons right. The search pill
- * takes ⌘K / Ctrl+K focus and Enter navigates to the search page. The
- * hamburger opens the slide-in glass drawer below.
+ * wordmark) — the wide glass search pill in the middle, and the circular
+ * glass Queue button on the right on phones only. The search pill
+ * takes ⌘K / Ctrl+K focus and Enter navigates to the search page.
+ * Every other section lives in the bottom navigation (phone) or the
+ * permanent sidebar (desktop).
  */
-function AppHeader({
-  onOpenDrawer,
-}: {
-  onOpenDrawer: () => void;
-}) {
+function AppHeader() {
   const navigate = useNavigate();
   const location = useLocation();
   const inputRef = useRef<HTMLInputElement | null>(null);
@@ -117,7 +121,7 @@ function AppHeader({
   };
 
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100]">
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100] md:left-[232px]">
       {/* readability gradient over the hero backdrop — the pills carry
           their own glass, this only keeps the top edge legible */}
       <div
@@ -128,11 +132,6 @@ function AppHeader({
         className="relative flex h-16 items-center gap-2 px-3 sm:gap-2.5 sm:px-4"
         style={{ paddingTop: 'var(--sat)', height: `calc(${HEADER_PX}px + var(--sat))` }}
       >
-        <div className="pointer-events-auto flex shrink-0 items-center">
-          <GlassIconButton label="Open menu" onClick={onOpenDrawer}>
-            <MenuIcon />
-          </GlassIconButton>
-        </div>
         <form
           onSubmit={submit}
           role="search"
@@ -154,16 +153,10 @@ function AppHeader({
             </kbd>
           </div>
         </form>
-        <div className="pointer-events-auto flex shrink-0 items-center gap-2">
-          <GlassIconButton label="Queue" onClick={() => navigate('/queue')}>
+        <div className="pointer-events-auto flex shrink-0 items-center">
+          {/* Phones only: Queue lives in the sidebar on desktop. */}
+          <GlassIconButton label="Queue" onClick={() => navigate('/queue')} className="md:hidden">
             <QueueListIcon />
-          </GlassIconButton>
-          <GlassIconButton
-            label="Library"
-            onClick={() => navigate('/library')}
-            className="hidden sm:grid"
-          >
-            <LibraryIcon />
           </GlassIconButton>
         </div>
       </div>
@@ -171,97 +164,114 @@ function AppHeader({
   );
 }
 
-/** Slide-in glass drawer: nav items, brand at the bottom. */
-function NavDrawer({
-  open,
-  onClose,
-}: {
-  open: boolean;
-  onClose: () => void;
-}) {
+/**
+ * Phone bottom navigation: Home / Search / Library / Settings, evenly
+ * spread, glass, clearing the home-indicator safe area. Queue stays in
+ * the header — four items is the whole bar.
+ */
+function BottomNav() {
   const location = useLocation();
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const onKey = (event: KeyboardEvent) => {
-      if (event.key === 'Escape') onClose();
-    };
-    document.addEventListener('keydown', onKey);
-    return () => document.removeEventListener('keydown', onKey);
-  }, [open, onClose]);
-
+  const effectsEnabled = useEffectsEnabled();
   return (
-    <AnimatePresence>
-      {open && (
-        <>
-          <motion.div
-            aria-hidden
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
-            transition={{ duration: 0.2 }}
-            onClick={onClose}
-            className="fixed inset-0 z-[1240] bg-black/60 backdrop-blur-[2px]"
-          />
-          <motion.aside
-            role="dialog"
-            aria-label="Menu"
-            aria-modal="true"
-            initial={{ x: '-104%' }}
-            animate={{ x: 0 }}
-            exit={{ x: '-104%' }}
-            transition={{ type: 'tween', duration: 0.26, ease: [0.2, 0.8, 0.2, 1] }}
-            className="fixed bottom-0 left-0 top-0 z-[1250] flex w-[300px] max-w-[84vw] flex-col border-r border-line bg-surface shadow-glass"
-          >
-            <div className="flex items-center gap-3 px-5 pb-2 pt-[max(20px,var(--sat))]">
-              <img
-                src={LOGO_SRC}
-                alt=""
-                aria-hidden="true"
-                draggable={false}
-                className="h-9 w-9 shrink-0 rounded-[11px]"
-              />
-              <span className="min-w-0 flex-1 text-lg font-extrabold tracking-tight">Carmen</span>
-              <button
-                type="button"
-                aria-label="Close menu"
-                onClick={onClose}
-                className="grid size-10 shrink-0 place-items-center rounded-full text-muted transition-colors hover:bg-hover hover:text-body focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94]"
-              >
-                <CloseIcon />
-              </button>
-            </div>
-            <nav aria-label="Primary" className="flex flex-col gap-1 px-3 pt-3">
-              {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
-                const active = location.pathname === path;
-                return (
-                  <NavLink
-                    key={path}
-                    to={path}
-                    onClick={onClose}
-                    aria-current={active ? 'page' : undefined}
-                    className={cn(
-                      'flex items-center gap-3 rounded-full px-4 py-3 text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
-                      active
-                        ? 'bg-accent/15 text-accent-fg'
-                        : 'text-body hover:bg-hover',
-                    )}
-                  >
-                    <Icon className="shrink-0" />
-                    {label}
-                  </NavLink>
-                );
-              })}
-            </nav>
-            <div className="mt-auto px-5 pb-[max(20px,env(safe-area-inset-bottom))]">
-              <p className="m-0 border-t border-line pt-4 text-[13px] leading-[1.4] text-muted">
-                Your music, everywhere.
-              </p>
-            </div>
-          </motion.aside>
-        </>
+    <nav
+      aria-label="Primary"
+      className={cn(
+        'fixed inset-x-0 bottom-0 z-[1200] border-t border-line shadow-glass md:hidden',
+        effectsEnabled ? 'bg-surface/86' : 'bg-surface',
       )}
-    </AnimatePresence>
+      style={{
+        backdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        paddingBottom: 'env(safe-area-inset-bottom)',
+      }}
+    >
+      <div className="grid grid-cols-4" style={{ height: BOTTOM_NAV_PX }}>
+        {BOTTOM_NAV_ITEMS.map(({ label, path, icon: Icon }) => {
+          const active = location.pathname === path;
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex flex-col items-center justify-center gap-0.5 no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                active ? 'text-accent-fg' : 'text-muted hover:text-body',
+              )}
+            >
+              <Icon fontSize="small" className="shrink-0" />
+              <span className="text-[11px] font-semibold leading-none">{label}</span>
+            </NavLink>
+          );
+        })}
+      </div>
+    </nav>
+  );
+}
+
+/**
+ * Permanent desktop sidebar: brand, the five sections, and the GitHub
+ * credit at the bottom. Full height, fixed width, glass — the content
+ * column shifts right by its width (see `Layout`).
+ */
+function Sidebar() {
+  const location = useLocation();
+  const effectsEnabled = useEffectsEnabled();
+  return (
+    <aside
+      aria-label="Primary"
+      className={cn(
+        'fixed bottom-0 left-0 top-0 z-[1200] hidden w-[232px] flex-col border-r border-line shadow-glass md:flex',
+        effectsEnabled ? 'bg-surface/86' : 'bg-surface',
+      )}
+      style={{
+        backdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+      }}
+    >
+      <div className="flex items-center gap-3 px-5 pb-2 pt-[max(20px,var(--sat))]">
+        <img
+          src={LOGO_SRC}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="h-9 w-9 shrink-0 rounded-[11px]"
+        />
+        <span className="min-w-0 flex-1 text-lg font-extrabold tracking-tight">Carmen</span>
+      </div>
+      <nav aria-label="Primary" className="flex flex-col gap-1 px-3 pt-3">
+        {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
+          const active = location.pathname === path;
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              aria-current={active ? 'page' : undefined}
+              className={cn(
+                'flex items-center gap-3 rounded-full px-4 py-3 text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                active
+                  ? 'bg-accent/15 text-accent-fg'
+                  : 'text-body hover:bg-hover',
+              )}
+            >
+              <Icon className="shrink-0" />
+              {label}
+            </NavLink>
+          );
+        })}
+      </nav>
+      <div className="mt-auto px-5 pb-[max(20px,env(safe-area-inset-bottom))]">
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          className="flex items-center gap-2 border-t border-line pt-4 text-[13px] font-semibold leading-[1.4] text-muted no-underline transition-colors hover:text-body focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <GitHubIcon fontSize="small" className="shrink-0" />
+          Carmen on GitHub
+        </a>
+        <p className="m-0 mt-1 text-[13px] leading-[1.4] text-muted">Your music, everywhere.</p>
+      </div>
+    </aside>
   );
 }
 
@@ -297,12 +307,11 @@ function NoticeSnackbars() {
   );
 }
 
-/** App shell: floating header, drawer, docked mini player, full player, snackbars. */
+/** App shell: floating header, sidebar / bottom nav, docked mini player, full player, snackbars. */
 export default function Layout() {
   const player = usePlayer();
   const location = useLocation();
   const isDesktop = useIsDesktop();
-  const [drawerOpen, setDrawerOpen] = useState(false);
   const showMini = Boolean(player.current);
   // Low battery mode: no ambient artwork layer, no glass surfaces —
   // plain solid ones instead (see useEffectsEnabled). The ambient wash
@@ -310,15 +319,18 @@ export default function Layout() {
   const effectsEnabled = useEffectsEnabled();
   const artworkBackground = useArtworkBackground();
 
-  // No bottom tab bar anymore: the mini player floats 12–16px above the
-  // bottom edge on every width, and content only reserves room for it.
+  // The mini player docks above the phone bottom nav (nav height + a
+  // finger's gap, past the home-indicator inset); on desktop it keeps
+  // its old 16px float.
   const bottomOffset = showMini
-    ? `calc(env(safe-area-inset-bottom) + ${isDesktop ? 16 : 12}px)`
+    ? `calc(env(safe-area-inset-bottom) + ${isDesktop ? 16 : BOTTOM_NAV_PX + 12}px)`
     : '0px';
 
+  // Content reserves room for the mini player and, on phones, the
+  // bottom nav under it — nothing scrolls underneath either bar.
   const contentPaddingBottom = isDesktop
     ? `calc(${showMini ? 92 : 24}px + env(safe-area-inset-bottom))`
-    : `calc(${showMini ? 84 : 20}px + env(safe-area-inset-bottom))`;
+    : `calc(${showMini ? 140 : BOTTOM_NAV_PX + 20}px + env(safe-area-inset-bottom))`;
 
   // Every navigation starts at the top. `<main>` is the app's only scroller,
   // so it keeps its position across routes — without this, opening Queue,
@@ -347,10 +359,14 @@ export default function Layout() {
           low battery mode and the Settings choice skip it entirely */}
       {effectsEnabled && artworkBackground && <AmbientBackground />}
 
-      <AppHeader onOpenDrawer={() => setDrawerOpen(true)} />
-      <NavDrawer open={drawerOpen} onClose={() => setDrawerOpen(false)} />
+      <AppHeader />
+      <Sidebar />
+      <BottomNav />
 
-      <div className="flex min-w-0 flex-1 flex-col">
+      {/* The content column shifts right by the sidebar width on
+          desktop (the sidebar itself is fixed); the home hero's negative
+          top margin is untouched by the horizontal shift. */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-[232px]">
         {/* the app's single vertical scroller — pages lay out inside it;
             `id="app-main"` lets HomePage's pull-to-refresh read its position.
             Top padding clears the floating header; the home hero cancels
@@ -365,7 +381,7 @@ export default function Layout() {
         </main>
       </div>
 
-      {/* the docked bar would sit under the desktop player drawer, so it
+      {/* the docked bar would sit under the desktop player sheet, so it
           steps aside while the player is open */}
       {!(isDesktop && player.sheetOpen) && <MiniPlayer bottomOffset={bottomOffset} />}
 

@@ -768,7 +768,19 @@ export default function PlayerSheet() {
               synced={lyrics.synced}
               unsynced={lyrics.unsynced}
               source={lyrics.source}
+              provider={lyrics.provider}
               loading={meta === null}
+              track={
+                track
+                  ? {
+                      videoId: track.videoId,
+                      title: track.title,
+                      artist: track.artist,
+                      album: track.albumName,
+                      durationSeconds: track.durationSeconds ?? undefined,
+                    }
+                  : null
+              }
             />
           </div>
         )}
@@ -925,7 +937,19 @@ export default function PlayerSheet() {
       synced={lyrics.synced}
       unsynced={lyrics.unsynced}
       source={lyrics.source}
+      provider={lyrics.provider}
       loading={meta === null}
+      track={
+        track
+          ? {
+              videoId: track.videoId,
+              title: track.title,
+              artist: track.artist,
+              album: track.albumName,
+              durationSeconds: track.durationSeconds ?? undefined,
+            }
+          : null
+      }
     />
   );
 

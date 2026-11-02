@@ -42,6 +42,18 @@ export interface LyricLine {
   text: string;
   /** Per-word karaoke stamps, when the source carries them (enhanced LRC). */
   words?: LyricWord[];
+  /** Provider-supplied translation of this line (TTML/LRC second text). */
+  translation?: string;
+  /** Provider-supplied romanization of this line (TTML transliteration). */
+  romanizedText?: string;
+  /** Provider-supplied romanization per word, aligned with `words`. */
+  romanizedWords?: string[];
+  /** An instrumental break inserted between vocal lines (Android parity). */
+  isInstrumental?: boolean;
+  /** Singer label from TTML/QRC (`v1`, `v2`, …) — drives line alignment. */
+  agent?: string;
+  /** Instrumental break length in ms (only on instrumental lines). */
+  durationMs?: number;
 }
 
 /** One karaoke word with explicit stamps (enhanced LRC), in milliseconds. */
@@ -49,6 +61,8 @@ export interface LyricWord {
   text: string;
   startMs: number;
   endMs: number;
+  /** Background vocal — rendered on its own smaller row (Android parity). */
+  isBackground?: boolean;
 }
 
 export interface TrackLyrics {
@@ -56,6 +70,8 @@ export interface TrackLyrics {
   synced: LyricLine[] | null;
   unsynced: string | null;
   source: string | null;
+  /** Chain provider id that produced these lyrics (see LYRICS_CHAIN). */
+  provider?: string | null;
 }
 
 /** Enriched `/browsing/track/{id}` payload. */
@@ -139,6 +155,48 @@ export const LYRICS_PROVIDERS: { id: LyricsProvider; label: string }[] = [
   { id: 'genius', label: 'Genius' },
 ];
 
+/**
+ * Lyrics provider chain, ported from the Android app (`LyricsHelper`):
+ * the same 13 providers in the same default order. The order IS the
+ * preference order — the first enabled provider wins ties, and the
+ * server picks the best-quality result across enabled providers.
+ * `youtube-subtitle` / `youtube-music` are always-on in Android and have
+ * no server-side port (their coverage comes from the YouTube fallbacks);
+ * they stay in the list so the order matches Android exactly.
+ */
+export const LYRICS_CHAIN: { id: string; label: string }[] = [
+  { id: 'betterlyrics', label: 'BetterLyrics' },
+  { id: 'betterlyrics-portato', label: 'BetterLyrics Portato' },
+  { id: 'youlyplus', label: 'YouLyPlus' },
+  { id: 'lrclib', label: 'LrcLib' },
+  { id: 'kugou', label: 'Kugou' },
+  { id: 'megalobiz', label: 'Megalobiz' },
+  { id: 'simpmusic', label: 'SimpMusic' },
+  { id: 'unison', label: 'Unison' },
+  { id: 'paxsenix-apple-music', label: 'Paxsenix: Apple Music' },
+  { id: 'paxsenix-spotify', label: 'Paxsenix: Spotify' },
+  { id: 'paxsenix-musixmatch', label: 'Paxsenix: Musixmatch' },
+  { id: 'youtube-subtitle', label: 'YouTube Subtitle' },
+  { id: 'youtube-music', label: 'YouTube Music' },
+];
+
+export const LYRICS_CHAIN_IDS: string[] = LYRICS_CHAIN.map((provider) => provider.id);
+
+/** Display name for a chain provider id (falls back to the raw id). */
+export function lyricsChainLabel(id: string | null | undefined): string {
+  return LYRICS_CHAIN.find((provider) => provider.id === id)?.label ?? id ?? 'Lyrics';
+}
+
+/** One provider's result from `GET /browsing/lyrics/providers`. */
+export interface ProviderLyricsResult {
+  provider: string;
+  name: string;
+  available: boolean;
+  synced: LyricLine[] | null;
+  unsynced: string | null;
+  source: string | null;
+}
+
 export type ThemeMode = 'light' | 'dark' | 'system';
 export type FontId = 'alexandria' | 'cairo' | 'system';
 /** Text size of the lyrics inside the Now Playing card. */
@@ -160,6 +218,24 @@ export interface AppSettings {
   adaptiveAccent: boolean;
   font: FontId;
   lyricsProvider: LyricsProvider;
+  /**
+   * Lyrics provider chain order (Android model): the first enabled
+   * provider is preferred; the server picks the best-quality result
+   * across enabled providers. Ids are `LYRICS_CHAIN` ids.
+   */
+  lyricsProviderOrder: string[];
+  /**
+   * Per-provider enable switches, keyed by chain id. Absent = enabled
+   * (only an explicit `false` turns a provider off).
+   */
+  lyricsProvidersEnabled: Record<string, boolean>;
+  /**
+   * Paxsenix API key, gating the three Paxsenix providers (Android
+   * parity). Empty = those providers are skipped. Sent to the server
+   * only as a lyrics-request parameter — never logged, never stored
+   * server-side — and never echoed anywhere in the UI.
+   */
+  paxsenixApiKey: string;
   /** Lyrics text size — the synced rows and the plain-text fallback alike. */
   lyricsSize: LyricsSize;
   /**

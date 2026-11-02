@@ -20,6 +20,13 @@ import type {
   SettingsKey,
   ThemeMode,
 } from '../types/models';
+import { LYRICS_CHAIN_IDS } from '../types/models';
+import {
+  migrateLegacyProvider,
+  normalizeProviderOrder,
+  parseProviderOrder,
+  parseProvidersEnabled,
+} from '../utils/lyricsProviders';
 import { isBatteryLow, useBattery } from './battery';
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -28,6 +35,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   adaptiveAccent: false,
   font: 'alexandria',
   lyricsProvider: 'auto',
+  lyricsProviderOrder: [...LYRICS_CHAIN_IDS],
+  lyricsProvidersEnabled: {},
+  paxsenixApiKey: '',
   lyricsSize: 'default',
   karaokeWords: true,
   apiBase: '',
@@ -49,6 +59,9 @@ const KEYS: SettingsKey[] = [
   'adaptiveAccent',
   'font',
   'lyricsProvider',
+  'lyricsProviderOrder',
+  'lyricsProvidersEnabled',
+  'paxsenixApiKey',
   'lyricsSize',
   'karaokeWords',
   'apiBase',
@@ -117,6 +130,13 @@ function coerce(key: SettingsKey, raw: string): AppSettings[SettingsKey] {
       return LYRICS.includes(raw as LyricsProvider)
         ? (raw as LyricsProvider)
         : DEFAULT_SETTINGS.lyricsProvider;
+    case 'lyricsProviderOrder':
+      return parseProviderOrder(raw);
+    case 'lyricsProvidersEnabled':
+      return parseProvidersEnabled(raw);
+    case 'paxsenixApiKey':
+      // Stored verbatim; the UI never echoes it back.
+      return raw;
     case 'lyricsSize':
       return LYRICS_SIZES.includes(raw as LyricsSize)
         ? (raw as LyricsSize)
@@ -157,6 +177,9 @@ function coerce(key: SettingsKey, raw: string): AppSettings[SettingsKey] {
 }
 
 function serialize(key: SettingsKey, value: AppSettings[SettingsKey]): string {
+  if (key === 'lyricsProviderOrder' || key === 'lyricsProvidersEnabled') {
+    return JSON.stringify(value ?? (key === 'lyricsProviderOrder' ? [] : {}));
+  }
   if (
     key === 'adaptiveAccent' ||
     key === 'lowBatteryMode' ||
@@ -179,6 +202,7 @@ export async function hydrateSettings(): Promise<void> {
   if (hydrated) return;
   hydrated = true;
   const next: AppSettings = { ...DEFAULT_SETTINGS };
+  let sawOrderRaw = false;
   for (const key of KEYS) {
     let raw: string | null = null;
     try {
@@ -210,7 +234,19 @@ export async function hydrateSettings(): Promise<void> {
       }
     }
     if (raw !== null && raw !== undefined) {
+      if (key === 'lyricsProviderOrder') sawOrderRaw = true;
       Object.assign(next, { [key]: coerce(key, raw) });
+    }
+  }
+  // One-time migration of the legacy single-provider setting: when no
+  // chain order was ever persisted, a legacy choice that maps onto the
+  // chain moves to the front. The migrated order is persisted, so this
+  // runs once; afterwards the old key is no longer read for lyrics.
+  if (!sawOrderRaw) {
+    const migrated = migrateLegacyProvider(next.lyricsProvider, next.lyricsProviderOrder);
+    if (migrated.join(',') !== next.lyricsProviderOrder.join(',')) {
+      next.lyricsProviderOrder = migrated;
+      void setSetting('lyricsProviderOrder', JSON.stringify(migrated)).catch(() => {});
     }
   }
   snapshot = next;

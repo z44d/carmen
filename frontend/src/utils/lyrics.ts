@@ -108,6 +108,41 @@ export function syncedLines(meta: TrackMeta | null | undefined): LyricLine[] | n
   return Array.isArray(lines) && lines.length ? lines : null;
 }
 
+/**
+ * Whether a line reads right-to-left — port of Android's `isRtlText`
+ * (`LyricsV2`): the first strong-directional character decides. Used
+ * to set `dir` on lyric rows so Arabic/Hebrew lines align and wrap
+ * the way the Android app renders them.
+ */
+export function isRtlText(text: string): boolean {
+  for (const char of text) {
+    const code = char.codePointAt(0) ?? 0;
+    // Hebrew, Arabic, and related RTL blocks (incl. presentation forms).
+    if (
+      (code >= 0x0590 && code <= 0x08ff) ||
+      (code >= 0xfb1d && code <= 0xfdff) ||
+      (code >= 0xfe70 && code <= 0xfeff) ||
+      (code >= 0x10800 && code <= 0x10fff)
+    ) {
+      return true;
+    }
+    // ASCII letters, Cyrillic, CJK and Hangul are strong LTR; digits
+    // are bidi-weak (European numbers) — Android's getDirectionality
+    // skips them, so they must not decide the direction either.
+    if (
+      (code >= 0x0041 && code <= 0x005a) ||
+      (code >= 0x0061 && code <= 0x007a) ||
+      (code >= 0x0400 && code <= 0x04ff) ||
+      (code >= 0x3040 && code <= 0x30ff) ||
+      (code >= 0x4e00 && code <= 0x9fff) ||
+      (code >= 0xac00 && code <= 0xd7af)
+    ) {
+      return false;
+    }
+  }
+  return false;
+}
+
 /** The plain unsynced text of a track payload, or `null`. */
 export function plainLyrics(meta: TrackMeta | null | undefined): string | null {
   const text = meta?.lyrics?.unsynced;

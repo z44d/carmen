@@ -35,7 +35,7 @@ import {
  */
 
 const REPO_URL = 'https://github.com/z44d/carmen';
-const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
+const LOGO_SRC = `${import.meta.env.BASE_URL}logo.svg`;
 
 /* ── shared class contracts ──────────────────────────────────────────── */
 

@@ -71,9 +71,10 @@ export default function MiniPlayer({ bottomOffset }: MiniPlayerProps) {
         // `'&:hover .mini-expand'` selector).
         'group fixed z-[1299] cursor-pointer overflow-hidden rounded-[56px] border border-line text-body',
         // mobile keeps the edge insets; on desktop the bar is a centred
-        // pill hugging its content
+        // pill hugging its content — centred within the content area,
+        // i.e. shifted right by half the 232px sidebar
         'left-2 right-2 sm:left-3 sm:right-3',
-        'md:left-1/2 md:right-auto md:w-fit md:max-w-[min(560px,calc(100vw_-_32px))] md:-translate-x-1/2',
+        'md:left-[calc(50vw+116px)] md:right-auto md:w-fit md:max-w-[min(560px,calc(100vw-264px))] md:-translate-x-1/2',
         // solid surface without the glass effect: the fill has to carry the
         // surface on its own once nothing blurs behind it
         effectsEnabled ? 'bg-surface/86' : 'bg-surface',

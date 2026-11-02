@@ -1,8 +1,12 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
+import { fetchTrackMeta } from '../api';
 import { usePlayer } from '../player/PlayerContext';
 import { useSettings } from '../settings/store';
-import type { LyricLine } from '../types/models';
+import type { LyricLine, TrackLyrics } from '../types/models';
+import { lyricsChainLabel } from '../types/models';
+import { cn } from '../utils/cn';
+import LyricsProviderPicker from './LyricsProviderPicker';
 import { Shimmer } from './ui';
 import SyncedLyrics from './SyncedLyrics';
 
@@ -13,8 +17,18 @@ interface LyricsViewProps {
   unsynced?: string | null;
   /** Attribution of the lyrics provider, shown under the text. */
   source?: string | null;
+  /** Chain provider id behind these lyrics, when the server reports it. */
+  provider?: string | null;
   /** True while the track metadata — and with it the lyrics — is loading. */
   loading?: boolean;
+  /** Identity of the playing song, for the provider picker. */
+  track?: {
+    videoId: string;
+    title?: string;
+    artist?: string;
+    album?: string;
+    durationSeconds?: number;
+  } | null;
 }
 
 /** Metadata that has not arrived by then counts as "no lyrics". */
@@ -44,7 +58,16 @@ const LYRICS_FADE_KEYFRAMES = `@keyframes lyrics-fade {
  *
  * **Highlight.** The active line wears the accent colour plus a slight
  * scale and weight — a transform, so nothing in the list reflows while the
- * song plays — while past lines dim and upcoming lines stay readable.
+ * song plays — while neighbouring lines dim by distance from it, past
+ * lines fading exactly like future ones at the same distance (Android's
+ * LyricsV2). Word stamps light up word by word when the source carries
+ * them; provider romanization rides above its line and translation
+ * below it, both at just over half size.
+ *
+ * **Provider chip + picker.** The chip names the provider behind the
+ * lyrics on screen; tapping it opens the per-provider search (Android's
+ * lyrics search dialog) and pinning one provider re-fetches this song
+ * only — the chain order in Settings is never changed from here.
  *
  * Typography follows the theme, which carries the interface font setting
  * (see `settings/store` + `theme/ThemeContext`), and lines use a comfortable
@@ -54,10 +77,17 @@ const LYRICS_FADE_KEYFRAMES = `@keyframes lyrics-fade {
  * Falls back to a scrollable plain text page (always pinned to the top)
  * when no timestamps exist, and to a quiet empty state otherwise.
  */
-export default function LyricsView({ synced, unsynced, source, loading = false }: LyricsViewProps) {
+export default function LyricsView({
+  synced,
+  unsynced,
+  source,
+  provider,
+  loading = false,
+  track,
+}: LyricsViewProps) {
   const { seek, current } = usePlayer();
   // The plain-text page follows the same size setting as the synced rows.
-  const { lyricsSize } = useSettings();
+  const { lyricsSize, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey } = useSettings();
   const unsyncedFontSize =
     lyricsSize === 'veryLarge' ? '1.45rem' : lyricsSize === 'large' ? '1.22rem' : '1.05rem';
 
@@ -65,43 +95,147 @@ export default function LyricsView({ synced, unsynced, source, loading = false }
   const scrollRef = useRef<HTMLDivElement | null>(null);
 
   const [timedOut, setTimedOut] = useState(false);
+  const [pickerOpen, setPickerOpen] = useState(false);
+  /** Provider pinned for this song only — cleared on every song change. */
+  const [pinnedProvider, setPinnedProvider] = useState<string | null>(null);
+  const [pinnedLyrics, setPinnedLyrics] = useState<TrackLyrics | null>(null);
+  const [pinnedLoading, setPinnedLoading] = useState(false);
+
+  const videoId = track?.videoId ?? current?.videoId ?? null;
+
+  useEffect(() => {
+    setPinnedProvider(null);
+    setPinnedLyrics(null);
+    setPickerOpen(false);
+  }, [videoId]);
+
+  // A pinned provider re-fetches this song's metadata with the chain
+  // pinned to that provider — the same request the player makes, plus
+  // the pin. The global order/enabled/key travel along unchanged.
+  useEffect(() => {
+    if (!pinnedProvider || !videoId) return undefined;
+    let cancelled = false;
+    setPinnedLoading(true);
+    fetchTrackMeta(videoId, {
+      provider: pinnedProvider,
+      order: lyricsProviderOrder,
+      enabled: lyricsProvidersEnabled,
+      ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+    })
+      .then((payload) => {
+        if (cancelled) return;
+        setPinnedLyrics(payload?.lyrics ?? null);
+        setPinnedLoading(false);
+      })
+      .catch(() => {
+        if (cancelled) return;
+        setPinnedLyrics(null);
+        setPinnedLoading(false);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pinnedProvider, videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey]);
+
+  const effectiveSynced = pinnedProvider ? pinnedLyrics?.synced : synced;
+  const effectiveUnsynced = pinnedProvider ? pinnedLyrics?.unsynced : unsynced;
+  const effectiveSource = pinnedProvider ? pinnedLyrics?.source : source;
+  const effectiveProvider = pinnedProvider
+    ? (pinnedLyrics?.provider ?? pinnedProvider)
+    : provider;
 
   /** Defensive copy of the payload lines (bad timestamps become `0`), in
-   *  timestamp order — the engine's binary search depends on it. */
+   *  timestamp order — the engine's binary search depends on it. Every
+   *  extended field the server carries (words, translation,
+   *  romanization, instrumental breaks, agents) rides along untouched. */
   const lines = useMemo<LyricLine[]>(() => {
-    if (!Array.isArray(synced)) return [];
+    if (!Array.isArray(effectiveSynced)) return [];
     return (
-      synced.map((line) => ({
-        timeMs: Number(line?.timeMs) || 0,
-        // an embedded newline would split a row's layout, so flatten breaks first
-        text: String(line?.text ?? '')
-          .replace(/[\r\n]+/g, ' ')
-          .trim(),
-      }))
+      effectiveSynced
+        .map((line) => ({
+          timeMs: Number(line?.timeMs) || 0,
+          endTimeMs: line?.endTimeMs,
+          // an embedded newline would split a row's layout, so flatten breaks first
+          text: String(line?.text ?? '')
+            .replace(/[\r\n]+/g, ' ')
+            .trim(),
+          words: line?.words,
+          translation: line?.translation,
+          romanizedText: line?.romanizedText,
+          romanizedWords: line?.romanizedWords,
+          isInstrumental: line?.isInstrumental,
+          agent: line?.agent,
+          durationMs: line?.durationMs,
+        }))
         // stable sort: sorted payloads (the normal case) keep their order
         .sort((a, b) => a.timeMs - b.timeMs)
     );
-  }, [synced]);
+  }, [effectiveSynced]);
 
   const hasSynced = lines.length > 0;
-  const stillLoading = loading && !timedOut;
+  const stillLoading = (loading || pinnedLoading) && !timedOut;
 
   // Metadata that never arrives (offline, provider down) must not spin
   // forever — after the deadline the panel reports the song as lyricless.
   useEffect(() => {
-    if (!loading) {
+    if (!loading && !pinnedLoading) {
       setTimedOut(false);
       return undefined;
     }
     const timer = setTimeout(() => setTimedOut(true), LOAD_TIMEOUT_MS);
     return () => clearTimeout(timer);
-  }, [loading]);
+  }, [loading, pinnedLoading]);
 
   // A plain-text page always opens at the first verse.
   useEffect(() => {
     if (hasSynced) return;
     scrollRef.current?.scrollTo({ top: 0 });
-  }, [unsynced, hasSynced]);
+  }, [effectiveUnsynced, hasSynced]);
+
+  const providerName = effectiveProvider ? lyricsChainLabel(effectiveProvider) : null;
+  const chipLabel =
+    providerName && effectiveSource && effectiveSource !== providerName
+      ? `${providerName} · ${effectiveSource}`
+      : (providerName ?? effectiveSource ?? null);
+  const canPick = Boolean(videoId);
+
+  const chip = chipLabel ? (
+    <div className="flex shrink-0 justify-center px-4 pb-1 pt-1">
+      <button
+        type="button"
+        disabled={!canPick}
+        onClick={() => setPickerOpen(true)}
+        title={canPick ? 'Choose lyrics provider' : undefined}
+        className={cn(
+          'rounded-full border border-line bg-surface/60 px-3 py-1 text-xs font-semibold leading-[1.4] text-muted shadow-glass transition focus-visible:outline-2 focus-visible:outline-accent',
+          canPick && 'cursor-pointer hover:brightness-125 hover:text-body active:scale-[0.96]',
+          pinnedProvider && 'border-accent/50 text-accent-fg',
+        )}
+      >
+        {chipLabel}
+        {pinnedProvider ? ' · pinned' : ''}
+      </button>
+    </div>
+  ) : null;
+
+  const picker = canPick ? (
+    <LyricsProviderPicker
+      open={pickerOpen}
+      onClose={() => setPickerOpen(false)}
+      videoId={videoId!}
+      title={track?.title ?? current?.title}
+      artist={track?.artist ?? current?.artist}
+      album={track?.album}
+      durationSeconds={track?.durationSeconds ?? current?.durationSeconds ?? undefined}
+      currentProviderId={effectiveProvider ?? null}
+      pinnedProviderId={pinnedProvider}
+      onSelect={(providerId) => {
+        setPinnedProvider(providerId);
+        setPinnedLyrics(null);
+        setPickerOpen(false);
+      }}
+    />
+  ) : null;
 
   // ── Loading ────────────────────────────────────────────────────────────
   if (stillLoading && !hasSynced) {
@@ -128,7 +262,7 @@ export default function LyricsView({ synced, unsynced, source, loading = false }
   }
 
   // ── Nothing to sing along to ───────────────────────────────────────────
-  if (!hasSynced && !unsynced) {
+  if (!hasSynced && !effectiveUnsynced) {
     return (
       <div aria-live="polite" className="grid h-full place-items-center px-6 py-12">
         <div className="text-center">
@@ -139,6 +273,7 @@ export default function LyricsView({ synced, unsynced, source, loading = false }
             {current?.title}
           </span>
         </div>
+        {picker}
       </div>
     );
   }
@@ -146,32 +281,31 @@ export default function LyricsView({ synced, unsynced, source, loading = false }
   // ── Unsynced fallback: plain page, pinned to the top ───────────────────
   if (!hasSynced) {
     return (
-      <div
-        ref={scrollRef}
-        className="h-full overflow-y-auto px-6 py-4"
-        style={{
-          maskImage:
-            'linear-gradient(to bottom, transparent, black 6%, black 92%, transparent)',
-          WebkitMaskImage:
-            'linear-gradient(to bottom, transparent, black 6%, black 92%, transparent)',
-        }}
-      >
-        <style>{LYRICS_FADE_KEYFRAMES}</style>
-        <p
-          className="m-0 whitespace-pre-line text-center text-base leading-[1.5] text-muted"
+      <div className="flex h-full min-h-0 flex-col">
+        {chip}
+        <div
+          ref={scrollRef}
+          className="min-h-0 flex-1 overflow-y-auto px-6 py-4"
           style={{
-            lineHeight: 2,
-            fontSize: unsyncedFontSize,
-            animation: 'lyrics-fade 500ms ease',
+            maskImage:
+              'linear-gradient(to bottom, transparent, black 6%, black 92%, transparent)',
+            WebkitMaskImage:
+              'linear-gradient(to bottom, transparent, black 6%, black 92%, transparent)',
           }}
         >
-          {unsynced}
-        </p>
-        {source && (
-          <span className="mt-4 block text-center text-xs leading-[1.4] text-disabled">
-            {source}
-          </span>
-        )}
+          <style>{LYRICS_FADE_KEYFRAMES}</style>
+          <p
+            className="m-0 whitespace-pre-line text-center text-base leading-[1.5] text-muted"
+            style={{
+              lineHeight: 2,
+              fontSize: unsyncedFontSize,
+              animation: 'lyrics-fade 500ms ease',
+            }}
+          >
+            {effectiveUnsynced}
+          </p>
+        </div>
+        {picker}
       </div>
     );
   }
@@ -179,12 +313,9 @@ export default function LyricsView({ synced, unsynced, source, loading = false }
   // ── Synced karaoke view ────────────────────────────────────────────────
   return (
     <div className="flex h-full min-h-0 flex-col">
+      {chip}
       <SyncedLyrics lines={lines} onSeek={seek} />
-      {source && (
-        <span className="block shrink-0 px-4 pb-2 text-center text-xs leading-[1.4] text-disabled">
-          {source}
-        </span>
-      )}
+      {picker}
     </div>
   );
 }
