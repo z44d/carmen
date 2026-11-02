@@ -3,7 +3,7 @@ import type { ReactElement, ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { cn } from '../utils/cn';
-import { FONTS, fontStack } from '../theme';
+import { ACCENTS, DEFAULT_ACCENT, FONTS, fontStack } from '../theme';
 import { useTheme } from '../theme/ThemeContext';
 import { useBattery } from '../settings/battery';
 import { updateSettings, useLowBatteryMode, useSettings } from '../settings/store';
@@ -16,6 +16,7 @@ import { LYRICS_CHAIN } from '../types/models';
 import { isProviderEnabled, normalizeProviderOrder } from '../utils/lyricsProviders';
 import type { ArtworkPlacement, CoverSize, FontId, LyricsSize, ThemeMode } from '../types/models';
 import {
+  CheckIcon,
   DarkModeIcon,
   DevicePhoneMobileIcon,
   DownloadIcon,
@@ -259,9 +260,10 @@ function SectionNav({ items }: { items: { id: string; label: string }[] }) {
 
 /**
  * Settings, reorganised: Appearance, Player, Lyrics, Downloads,
- * Storage, Server, About, Credits. The colour system is neutral by
- * design — there is no accent picker: active states and focus rings
- * wear the body text colour in both themes.
+ * Storage, Server, About, Credits. The accent picker and Adaptive
+ * accent live in Appearance: Neutral is the default, so the site
+ * stays unified and neutral until the user picks a hue or turns
+ * Adaptive accent on.
  *
  * Every persisted choice is written straight through the settings store;
  * the theme context lends the resolved mode for the status chip.
@@ -269,6 +271,7 @@ function SectionNav({ items }: { items: { id: string; label: string }[] }) {
 export default function SettingsPage() {
   const {
     themeMode,
+    accent,
     font,
     lyricsProviderOrder,
     lyricsProvidersEnabled,
@@ -291,7 +294,7 @@ export default function SettingsPage() {
   // kick-in) and the reading behind its status line.
   const lowBatteryActive = useLowBatteryMode();
   const battery = useBattery();
-  const { resolved } = useTheme();
+  const { resolved, adaptiveColor, adaptiveAccent } = useTheme();
   const selectedFont = FONTS.find((option) => option.id === font) || FONTS[0];
 
   // App version + runtime facts (Settings → About). Tauri only — the web
@@ -456,6 +459,93 @@ export default function SettingsPage() {
               </span>
             </div>
           </ChoiceBlock>
+
+          <ChoiceBlock
+            title="Accent color"
+            chip={
+              <span className="font-mono text-xs leading-[1.4] text-muted">
+                {accent.toUpperCase()}
+              </span>
+            }
+            hint={
+              <>
+                Defaults to Neutral ({DEFAULT_ACCENT}).
+                {lowBatteryActive &&
+                  ' Low battery mode overrides it with white while it is on.'}
+              </>
+            }
+          >
+            <div
+              role="radiogroup"
+              aria-label="Accent color"
+              className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-2"
+            >
+              {ACCENTS.map((option) => {
+                const selected = accent.toLowerCase() === option.color.toLowerCase();
+                const lightSwatch = ['#ffffff', '#fafafa'].includes(option.color.toLowerCase());
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={option.name}
+                    title={option.name}
+                    onClick={() => updateSettings({ accent: option.color })}
+                    className={cn(
+                      'grid aspect-square w-full cursor-pointer place-items-center rounded-full p-0',
+                      'transition-transform duration-150 hover:scale-[1.08]',
+                      selected ? 'border-[3px]' : 'border-2',
+                      selected
+                        ? 'border-body'
+                        : // a near-white swatch needs an edge to be seen
+                          lightSwatch
+                          ? 'border-line'
+                          : 'border-transparent',
+                      // a light swatch would hide a white checkmark
+                      lightSwatch ? 'text-[#12160f]' : 'text-white',
+                    )}
+                    style={{ backgroundColor: option.color }}
+                  >
+                    {selected && <CheckIcon sx={{ fontSize: 18 }} />}
+                  </button>
+                );
+              })}
+            </div>
+          </ChoiceBlock>
+
+          <SettingRow
+            title="Adaptive accent color"
+            description="The accent follows the cover of the playing song — its most used color, or white when the cover is black. Your chosen accent is used while nothing plays."
+            status={
+              lowBatteryActive ? (
+                <span className="block text-xs leading-[1.4] text-muted">
+                  Paused while low battery mode is on — your choice is kept and returns when you
+                  turn it off.
+                </span>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={adaptiveAccent}
+              disabled={lowBatteryActive}
+              onChange={(_, checked) => updateSettings({ adaptiveAccent: checked })}
+              inputProps={{ 'aria-label': 'Adaptive accent color' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          {adaptiveAccent && adaptiveColor && (
+            <div className="flex flex-row items-center gap-2 px-4 py-4">
+              <div
+                className="h-[14px] w-[14px] shrink-0 rounded-full border border-line"
+                style={{ backgroundColor: adaptiveColor }}
+              />
+              <span className="font-mono text-xs leading-[1.4] text-muted">
+                {adaptiveColor} — read from the cover of the playing song
+              </span>
+            </div>
+          )}
 
           <SettingRow
             title="Blur effects"

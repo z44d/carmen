@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchLyricsProviders } from '../api';
-import { fetchClientProviderResults } from '../lyrics/chain';
+import { fetchClientProviderResults, type ClientProviderEntry } from '../lyrics/chain';
 import { useSettings } from '../settings/store';
 import { lyricsChainLabel, type ProviderLyricsResult } from '../types/models';
 import { cn } from '../utils/cn';
@@ -15,17 +15,23 @@ import { Dialog, DialogContent, DialogTitle } from './ui';
  * The results come from the client-side chain in the browser (direct
  * fetch, then a public CORS relay for origins that send no
  * `Access-Control-Allow-Origin` header — Paxsenix stays direct-only).
- * The Carmen server endpoint `GET /browsing/lyrics/providers` is only
- * a last resort, for exactly the providers whose direct + relay
- * fetches both failed, and a 500 from an old server is ignored when
+ * The Carmen server endpoint `GET /browsing/lyrics/providers` is the
+ * last resort for every provider that returned no lyrics in the
+ * browser — not only for outright fetch failures: a provider that
+ * answered with a rate-limit/bot page or a non-2xx status looks
+ * empty to the browser, but the server (no CORS, real User-Agent)
+ * may still succeed. A 500 from an old server is ignored when
  * client results exist — so the picker never shows the old
  * "Could not reach" error while direct results are on screen.
- * Provider name, sync badge
- * (Word synced / Synced / Plain), line + character counts, and a
- * preview that expands from 2 lines to 8. Tapping a card pins that
- * provider for this song only — the global chain order in Settings
- * is never touched. A "Best match" row appears while a provider is
- * pinned, returning to the chain's best result.
+ * YouTube Music is server-only (its lyrics come from the server's
+ * mobile-browse path): its row shows lyrics only once the API
+ * server runs code that includes the provider, and an honest
+ * "Needs a server update" label until then. Provider name, sync
+ * badge (Word synced / Synced / Plain), line + character counts,
+ * and a preview that expands from 2 lines to 8. Tapping a card
+ * pins that provider for this song only — the global chain order
+ * in Settings is never touched. A "Best match" row appears while
+ * a provider is pinned, returning to the chain's best result.
  */
 
 interface LyricsProviderPickerProps {
@@ -46,15 +52,30 @@ interface LyricsProviderPickerProps {
 
 type LoadState = 'loading' | 'error' | 'done';
 
-function syncBadge(result: ProviderLyricsResult): string {
-  if (!result.available) return 'Unavailable';
+function syncBadge(result: ProviderLyricsResult, hasPaxsenixKey: boolean, serverAnswered: boolean): string {
   if (result.synced?.length) {
     return result.synced.some((line) => line.words?.length)
       ? 'Word synced'
       : 'Synced';
   }
   if (result.unsynced?.trim()) return 'Plain';
-  return 'No lyrics';
+  if (!result.available) {
+    // Per-row reason, not a bare "Unavailable": Paxsenix is gated on
+    // a key (Android behaviour), YouTube Subtitle cannot run on the
+    // web at all (PoToken auth lives only in the Android player
+    // session), and YouTube Music is a server provider — on a
+    // server that predates it, the row is unavailable until the
+    // API server is redeployed with the provider included.
+    if (result.provider.startsWith('paxsenix-') && !hasPaxsenixKey) {
+      return 'Needs API key — set it in Settings > Lyrics';
+    }
+    if (result.provider === 'youtube-subtitle') return 'Not available on web';
+    if (result.provider === 'youtube-music' && serverAnswered) {
+      return 'Needs a server update';
+    }
+    return 'Unavailable';
+  }
+  return 'No lyrics found';
 }
 
 function resultStats(result: ProviderLyricsResult): string | null {
@@ -95,6 +116,7 @@ export default function LyricsProviderPicker({
   const { lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey } = useSettings();
   const [state, setState] = useState<LoadState>('loading');
   const [results, setResults] = useState<ProviderLyricsResult[]>([]);
+  const [serverAnswered, setServerAnswered] = useState(false);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [attempt, setAttempt] = useState(0);
 
@@ -112,7 +134,7 @@ export default function LyricsProviderPicker({
         ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
       };
       // Layer 1+2: the client chain (direct, then CORS relay).
-      let clientEntries: ProviderLyricsResult[] = [];
+      let clientEntries: ClientProviderEntry[] = [];
       let clientFailed = false;
       try {
         clientEntries = await fetchClientProviderResults(query, signal);
@@ -121,17 +143,32 @@ export default function LyricsProviderPicker({
         clientFailed = true;
       }
       if (signal.aborted) return;
-      // Layer 3: the server endpoint, only for the ids that failed
-      // both browser layers (or every enabled id if the client chain
-      // itself threw). A 500 from a pre-lyrics-port server is ignored
-      // whenever client results exist.
-      const failedIds = clientEntries
-        .filter((entry) => (entry as { directFailed?: boolean }).directFailed)
-        .map((entry) => entry.provider);
+      // Layer 3: the server endpoint, for every provider that
+      // returned no lyrics in the browser — failed fetches, empty
+      // answers (a rate-limit/bot page or non-2xx status the browser
+      // cannot read may still succeed from the server), and the
+      // server-only YouTube Music provider, which never runs in the
+      // browser at all. Excluded: YouTube Subtitle (unavailable
+      // everywhere on the web) and Paxsenix with no key set (key-
+      // gated: no request is ever pretended for it). A 500 from a
+      // pre-lyrics-port server is ignored whenever client results
+      // exist. When the client chain itself threw, every enabled
+      // id goes to the server.
+      const hasKey = Boolean(paxsenixApiKey?.trim());
+      const entryEmpty = (entry: ClientProviderEntry): boolean =>
+        !entry.synced?.length && !entry.unsynced?.trim();
       const fallbackIds = clientFailed
         ? lyricsProviderOrder.filter((id) => lyricsProvidersEnabled?.[id] !== false)
-        : failedIds;
+        : clientEntries
+            .filter(
+              (entry) =>
+                entryEmpty(entry) &&
+                entry.provider !== 'youtube-subtitle' &&
+                !(entry.provider.startsWith('paxsenix-') && !hasKey),
+            )
+            .map((entry) => entry.provider);
       let merged: ProviderLyricsResult[] = clientEntries;
+      let answered = false;
       if (fallbackIds.length) {
         try {
           const payload = await fetchLyricsProviders(
@@ -143,6 +180,7 @@ export default function LyricsProviderPicker({
             },
             signal,
           );
+          answered = true;
           const serverResults = (
             Array.isArray(payload?.results) ? payload.results : []
           ).filter((result) => fallbackIds.includes(result.provider));
@@ -170,9 +208,11 @@ export default function LyricsProviderPicker({
       }
       if (signal.aborted) return;
       if (clientFailed && merged.length === 0) {
+        setServerAnswered(answered);
         setState('error');
         return;
       }
+      setServerAnswered(answered);
       setResults(merged);
       setState('done');
     },
@@ -311,7 +351,7 @@ export default function LyricsProviderPicker({
                       <span className="block truncate text-sm font-semibold leading-[1.43]">
                         {result.name || lyricsChainLabel(result.provider)}
                       </span>
-                      <span className="block text-xs leading-[1.4] text-muted">{syncBadge(result)}</span>
+                      <span className="block text-xs leading-[1.4] text-muted">{syncBadge(result, Boolean(paxsenixApiKey?.trim()), serverAnswered)}</span>
                     </span>
                     {isCurrent && (
                       <span className="shrink-0 rounded-full bg-accent/15 px-2.5 py-1 text-xs font-semibold text-accent-fg">

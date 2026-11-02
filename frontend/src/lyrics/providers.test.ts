@@ -142,6 +142,73 @@ describe('BetterLyrics provider', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).toContain('/qq/getLyrics');
   });
+
+  it('Portato accepts a QRC payload inside the JSON lyrics envelope', async () => {
+    // The qq/getLyrics endpoint returns QRC, not TTML, inside the
+    // `lyrics` key; the decoder must hand it to the chain parser
+    // instead of dropping it as "not TTML".
+    const qrc =
+      '<?xml version="1.0"?><QrcInfos><LyricInfo LyricContent="[ti:Song][0,2000]Set(0,300) fire(300,400)"/></QrcInfos>';
+    fetchMock.mockResolvedValue(textResponse(JSON.stringify({ lyrics: qrc })));
+    const def = await provider('betterlyrics-portato');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Song', artist: 'Artist', album: 'Album', durationSeconds: 243 },
+      undefined,
+    );
+    expect(result).toBe(qrc);
+  });
+
+  it('accepts a raw QRC document as the whole response body', async () => {
+    const qrc = '<QrcInfos><LyricInfo LyricContent="[0,2000]Set(0,300) fire(300,400)"/></QrcInfos>';
+    fetchMock.mockResolvedValue(textResponse(qrc));
+    const def = await provider('betterlyrics-portato');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Song', artist: 'Artist', album: '', durationSeconds: null },
+      undefined,
+    );
+    expect(result).toBe(qrc);
+  });
+});
+
+describe('Megalobiz provider', () => {
+  it('uses the public API search + LRC document, not the dead HTML scrape', async () => {
+    const lrc = '[00:01.00]I let it fall, my heart,';
+    fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({
+          results: [
+            { id: 29926, title: 'Set Fire to the Rain', artist: 'Adele', duration_diff: 1.26, sync: 'manual', score: 1 },
+          ],
+        }),
+      )
+      .mockResolvedValueOnce(textResponse(lrc));
+    const def = await provider('megalobiz');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Set Fire to the Rain', artist: 'Adele', album: '21', durationSeconds: 243 },
+      undefined,
+    );
+    expect(result).toBe(lrc);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const searchUrl = new URL(String(fetchMock.mock.calls[0][0]));
+    expect(searchUrl.hostname).toBe('api.megalobiz.com');
+    expect(searchUrl.pathname).toBe('/api/public/v1/search');
+    expect(searchUrl.searchParams.get('title')).toBe('Set Fire to the Rain');
+    expect(searchUrl.searchParams.get('artist')).toBe('Adele');
+    expect(searchUrl.searchParams.get('duration')).toBe('243');
+    const lrcUrl = new URL(String(fetchMock.mock.calls[1][0]));
+    expect(lrcUrl.pathname).toBe('/api/public/v1/lrc/29926');
+    expect(lrcUrl.searchParams.get('format')).toBe('lrc');
+  });
+
+  it('returns null when the API has no results', async () => {
+    fetchMock.mockResolvedValue(jsonResponse({ results: [] }));
+    const def = await provider('megalobiz');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Song', artist: 'Artist', album: '', durationSeconds: 100 },
+      undefined,
+    );
+    expect(result).toBeNull();
+  });
 });
 
 describe('Unison provider', () => {
@@ -197,10 +264,19 @@ describe('Paxsenix providers', () => {
 });
 
 describe('YouTube providers', () => {
-  it('stay unavailable and return nothing', async () => {
+  it('subtitle stays unavailable and returns nothing', async () => {
     const registry = await getProviderRegistry();
     const def = registry.find((d) => d.id === 'youtube-subtitle')!;
     expect(def.alwaysUnavailable).toBe(true);
+    expect(await def.getLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toBeNull();
+    expect(await def.getAllLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toEqual([]);
+  });
+
+  it('music is server-only: never unavailable in the registry, never fetched in the browser', async () => {
+    const registry = await getProviderRegistry();
+    const def = registry.find((d) => d.id === 'youtube-music')!;
+    expect(def.alwaysUnavailable).toBe(false);
+    expect(def.serverOnly).toBe(true);
     expect(await def.getLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toBeNull();
     expect(await def.getAllLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toEqual([]);
   });

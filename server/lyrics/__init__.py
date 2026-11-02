@@ -7,9 +7,11 @@ whether it needs a Paxsenix API key. The unused ``Paxsenix (Auto)``
 provider is NOT in this registry: it is not in
 ``LyricsHelper.baseProviders`` either.
 
-YouTube providers are registered but never available server-side (see
-``youtube.py``); Paxsenix providers are available only when a key is
-supplied with the request.
+YouTube Subtitle is registered but never available server-side (see
+``youtube.py`` — it needs the Android player session's PoToken auth
+state); YouTube Music is a real chain provider reusing the mobile
+browse timed lines. Paxsenix providers are available only when a key
+is supplied with the request.
 """
 
 from __future__ import annotations
@@ -131,8 +133,8 @@ _PROVIDERS = [
         "youtube-subtitle",
         "YouTube Subtitle",
         youtube,
-        youtube.get_lyrics,
-        youtube.get_all_lyrics,
+        youtube.get_subtitle_lyrics,
+        youtube.get_subtitle_all_lyrics,
         False,
         True,
     ),
@@ -140,10 +142,10 @@ _PROVIDERS = [
         "youtube-music",
         "YouTube Music",
         youtube,
-        youtube.get_lyrics,
-        youtube.get_all_lyrics,
+        youtube.get_music_lyrics,
+        youtube.get_music_all_lyrics,
         False,
-        True,
+        False,
     ),
 ]
 
@@ -170,8 +172,10 @@ def is_known(provider_id: str) -> bool:
 def is_available(provider_id: str, api_key: str | None = None) -> bool:
     """Whether the provider can run for this request.
 
-    YouTube providers are never available server-side; Paxsenix providers
-    need a non-blank key; everything else is always available.
+    YouTube Subtitle is never available server-side (PoToken auth
+    state lives only in the Android player session); Paxsenix
+    providers need a non-blank key; everything else is always
+    available.
     """
     entry = _BY_ID.get(provider_id)
     if entry is None:
@@ -204,11 +208,19 @@ def resolve_order(
     return order
 
 
-def call_get_lyrics(provider_id, video_id, title, artist, album, duration_seconds, api_key=None):
+def call_get_lyrics(provider_id, video_id, title, artist, album, duration_seconds, api_key=None, browse_id=None):
     entry = _BY_ID[provider_id]
+    if provider_id == "youtube-music":
+        return entry[3](
+            video_id, title, artist, album, duration_seconds, api_key, browse_id=browse_id
+        )
     return entry[3](video_id, title, artist, album, duration_seconds, api_key)
 
 
-def call_get_all_lyrics(provider_id, video_id, title, artist, album, duration_seconds, api_key=None):
+def call_get_all_lyrics(provider_id, video_id, title, artist, album, duration_seconds, api_key=None, browse_id=None):
     entry = _BY_ID[provider_id]
+    if provider_id == "youtube-music":
+        return entry[4](
+            video_id, title, artist, album, duration_seconds, api_key, browse_id=browse_id
+        )
     return entry[4](video_id, title, artist, album, duration_seconds, api_key)

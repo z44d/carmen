@@ -7,10 +7,13 @@ when > 0):
 - ``getLyrics`` then ``kugou/getLyrics`` (BetterLyrics)
 - ``qq/getLyrics`` only (BetterLyrics Portato)
 
-Responses are TTML documents or JSON envelopes unwrapped up to two levels
-deep through the ``ttml`` / ``lyrics`` / ``data`` / ``result`` /
-``response`` keys, carrying an optional ``score`` — exactly as in Kotlin.
-A plain-text (non-TTML, non-JSON) body decodes to nothing, as in Kotlin.
+Responses are TTML or QRC documents, or JSON envelopes unwrapped up
+to two levels deep through the ``ttml`` / ``lyrics`` / ``data`` /
+``result`` / ``response`` keys, carrying an optional ``score`` — exactly
+as in Kotlin, except QRC payloads are accepted as content: the
+``qq/getLyrics`` endpoint returns QRC inside the ``lyrics`` key, and
+the chain parser handles QRC natively (see ``_qrc.py``). A plain-text
+(non-TTML, non-QRC, non-JSON) body decodes to nothing, as in Kotlin.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from __future__ import annotations
 import re
 
 from ._http import http_get_text, parse_json_lenient
+from ._qrc import is_qrc
 
 NAME = "BetterLyrics"
 ID = "betterlyrics"
@@ -34,10 +38,28 @@ def _is_ttml_payload(value: str) -> bool:
     return _TTML_ROOT_RE.search(value[:_MAX_TTML_ROOT_SCAN_LENGTH]) is not None
 
 
+def _is_qrc_payload(value: str) -> bool:
+    """Whether *value* is itself a QRC document (not a JSON envelope).
+
+    The ``qq/getLyrics`` (Portato) endpoint returns QRC inside the
+    ``lyrics`` envelope key; QRC is a first-class lyric format for the
+    chain parser (see ``_qrc.py``), so a QRC payload is valid content
+    exactly like a TTML one. The raw-envelope check is gated on the
+    text starting with ``<``: a JSON envelope merely *contains* the
+    QRC markers inside its escaped string, and must still go through
+    the unwrap branch so the parser receives the QRC text itself,
+    not the JSON.
+    """
+    stripped = value.lstrip()
+    return stripped.startswith("<") and is_qrc(value)
+
+
 def _decode_lyrics(response_text: str):
     """Return ``(content, score)`` or ``None``, mirroring decodeLyrics."""
     raw = response_text.removeprefix("\ufeff")
     if _is_ttml_payload(raw):
+        return raw, None
+    if _is_qrc_payload(raw):
         return raw, None
     root = parse_json_lenient(response_text)
     if root is None:
@@ -45,7 +67,9 @@ def _decode_lyrics(response_text: str):
     score = None
     if isinstance(root, dict):
         ttml_value = root.get("ttml", root.get("lyrics", ""))
-        if isinstance(ttml_value, str) and _is_ttml_payload(ttml_value):
+        if isinstance(ttml_value, str) and (
+            _is_ttml_payload(ttml_value) or is_qrc(ttml_value)
+        ):
             score = root.get("score")
             if isinstance(score, (int, float)):
                 return ttml_value, float(score)
@@ -76,7 +100,7 @@ def _decode_element(element, depth: int):
         content, nested_score = decoded
         return content, score if score is not None else nested_score
     if isinstance(element, str):
-        if _is_ttml_payload(element):
+        if _is_ttml_payload(element) or is_qrc(element):
             return element, None
         if depth < _MAX_RESPONSE_UNWRAP_DEPTH:
             nested = parse_json_lenient(element)

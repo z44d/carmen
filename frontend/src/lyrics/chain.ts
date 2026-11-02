@@ -60,10 +60,15 @@ export interface ClientProviderEntry extends ProviderLyricsResult {
   /**
    * Whether the provider failed after every browser layer:
    * direct fetch AND both CORS relays (transport/CORS/network/
-   * timeout). Only these ids are eligible for the Carmen-server
-   * fallback (layer 3) in the picker.
+   * timeout). A provider that answered — even with a non-2xx
+   * status or no lyrics — is not marked failed here; the picker
+   * still sends empty providers to the server fallback, because
+   * an answer the browser cannot read (CORS/rate-limit page) may
+   * succeed from the server.
    */
   directFailed: boolean;
+  /** Server-only providers never run in the browser (YouTube Music). */
+  serverOnly: boolean;
   quality: number | null;
 }
 
@@ -273,7 +278,10 @@ async function runChainInternal(
 
   const runnable = order.filter((id) => {
     const def = byId.get(id);
-    return def != null && isProviderAvailable(def, ctx.paxsenixKey);
+    // Server-only providers never run in the browser; their entry
+    // is built below with available:false and serverOnly:true so the
+    // picker merges the server result for them.
+    return def != null && !def.serverOnly && isProviderAvailable(def, ctx.paxsenixKey);
   });
 
   const jobs = runnable.map((providerId, index) => {
@@ -308,7 +316,7 @@ async function runChainInternal(
   for (const providerId of order) {
     const def = byId.get(providerId);
     const name = def?.name ?? providerName(providerId);
-    const available = def != null && isProviderAvailable(def, ctx.paxsenixKey);
+    const available = def != null && !def.serverOnly && isProviderAvailable(def, ctx.paxsenixKey);
     if (!available) {
       entries.push({
         provider: providerId,
@@ -318,6 +326,7 @@ async function runChainInternal(
         unsynced: null,
         source: null,
         directFailed: false,
+        serverOnly: def?.serverOnly ?? false,
         quality: null,
       });
       continue;
@@ -333,6 +342,7 @@ async function runChainInternal(
         unsynced: null,
         source: null,
         directFailed: wasFailed,
+        serverOnly: false,
         quality: null,
       });
       continue;
@@ -349,15 +359,16 @@ async function runChainInternal(
         unsynced: parsed.unsynced,
         source: name,
         directFailed: false,
+        serverOnly: false,
         quality: parsed.quality,
       });
     }
   }
   // Providers whose fetch failed but which also produced a parsed
-  // result (partial) are not "failed" for fallback purposes; the
-  // The directFailed flag above only marks empty results from failed jobs
-  // (direct + relay exhausted); a provider that answered, even with no
-  // lyrics, is not failed and is never sent to the server fallback.
+  // result (partial) are not "failed" for fallback purposes. The
+  // picker sends every empty provider (failed, answered-empty, or
+  // server-only) to the server fallback; directFailed only records
+  // that the browser layers themselves failed.
 
   let best: ClientBestLyrics | null = null;
   if (entries.length) {

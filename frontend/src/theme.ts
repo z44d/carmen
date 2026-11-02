@@ -1,5 +1,35 @@
 import type { FontId } from './types/models';
 
+/** One selectable accent of the palette. */
+export interface AccentOption {
+  id: string;
+  name: string;
+  color: string;
+}
+
+/**
+ * Accent palette. The green family (Material Green, Emerald, Teal,
+ * Lime) is deliberately absent — the site's colours stay unified and
+ * neutral by default. Neutral is the first option and the default, so
+ * anyone who never touches the picker keeps the neutral look; the
+ * remaining hues are user choices only, applied through the accent
+ * token when Adaptive accent is off.
+ */
+export const ACCENTS: AccentOption[] = [
+  { id: 'neutral', name: 'Neutral', color: '#fafafa' },
+  { id: 'cyan', name: 'Cyan', color: '#00BCD4' },
+  { id: 'blue', name: 'Blue', color: '#2196F3' },
+  { id: 'indigo', name: 'Indigo', color: '#3F51B5' },
+  { id: 'purple', name: 'Purple', color: '#9C27B0' },
+  { id: 'pink', name: 'Pink', color: '#E91E63' },
+  { id: 'red', name: 'Red', color: '#F44336' },
+  { id: 'orange', name: 'Orange', color: '#FF5722' },
+  { id: 'amber', name: 'Amber', color: '#FF9800' },
+  { id: 'white', name: 'White', color: '#ffffff' },
+];
+
+export const DEFAULT_ACCENT = '#fafafa';
+
 const SYSTEM_FONT =
   '"SF Pro Text", -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif';
 
@@ -44,9 +74,9 @@ export const DEFAULT_FONT: FontId = 'alexandria';
  * Dark look: the dark palette is near-black and flat (`#050505` ground,
  * `#0d0d0f` surfaces, hairline white dividers) with white text and grey
  * secondary text; the light palette is the same layout in readable light
- * tones. There is no coloured accent: the accent token resolves to the
- * body text colour in both themes, so active states and focus rings wear
- * the same neutral chrome everywhere.
+ * tones. The accent picker (and Adaptive accent, when on) drives active
+ * states and focus through the `--app-accent` token; the default accent
+ * is Neutral, so chrome stays monochrome until the user picks a hue.
  */
 const PALETTE = {
   dark: {
@@ -88,8 +118,7 @@ export function cssPalette(mode: 'light' | 'dark'): Record<string, string> {
     // stock light/dark palettes.
     '--app-text-disabled': mode === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.26)',
     '--app-action-active': mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.54)',
-    // Success wears the body text colour — the system has no coloured
-    // accent, so success is a check/icon, not a hue.
+    // Success wears the body text colour — a check/icon, not a hue.
     '--app-success': colors.text,
     '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
     // MUI error.main — the one severity colour `buildTheme` never overrode.

@@ -119,6 +119,23 @@ describe('client chain all-results', () => {
     expect(entries.every((e) => e.available === false)).toBe(true);
   });
 
+  it('marks the server-only provider so the picker merges its server result', async () => {
+    const entries = await fetchClientProviderResults({
+      videoId: 'all-4',
+      title: 'Song',
+      artist: 'Artist',
+      durationSeconds: 100,
+      order: ['youtube-music', 'youtube-subtitle'],
+    });
+    const music = entries.find((e) => e.provider === 'youtube-music')!;
+    expect(music.available).toBe(false);
+    expect(music.serverOnly).toBe(true);
+    expect(music.synced).toBeNull();
+    expect(music.unsynced).toBeNull();
+    const subtitle = entries.find((e) => e.provider === 'youtube-subtitle')!;
+    expect(subtitle.serverOnly).toBe(false);
+  });
+
   it('does not throw when a provider fetch rejects', async () => {
     const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
     fetchMock.mockImplementationOnce(async () => {

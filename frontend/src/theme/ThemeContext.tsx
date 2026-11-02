@@ -10,6 +10,12 @@ import {
 
 import { updateSettings, useLowBatteryMode, useSettings } from '../settings/store';
 import { cssPalette, fontStack } from '../theme';
+import {
+  LOW_BATTERY_ACCENT,
+  resolveAccentContrast,
+  resolveAccentFg,
+  resolveAccentInUse,
+} from './accent';
 import type { FontId, ThemeMode } from '../types/models';
 
 /** What {@link useTheme} answers — one entry per theme engine setting. */
@@ -21,28 +27,26 @@ export interface ThemeContextValue {
   accent: string;
   setAccent: (accent: string) => void;
   /**
-   * The accent the theme actually wears. The system has no coloured
-   * accent: this is always the body text colour of the resolved theme
-   * (white in dark mode, near-black in light mode), so every `accent-*`
-   * class renders neutral chrome. The stored Settings accent and the
-   * adaptive artwork colour are kept (storage keys, session state and
-   * the sampler all still work) but no longer affect rendering.
+   * The accent the theme actually wears: the adaptive colour while artwork
+   * theming has one, otherwise the chosen accent — and always white while
+   * low battery mode is on.
    */
   accentInUse: string;
   /**
    * Accent for things painted **as text / line art** on the app background.
-   * Same as {@link accentInUse} — the body text colour, which is legible
-   * on the background in both themes. Filled accent surfaces (buttons,
-   * FABs, selected chips) pair their `bg-accent` with
-   * {@link accentContrast} instead.
+   * Same as {@link accentInUse} except when that colour would disappear:
+   * white on a light surface reads as nothing, so light mode falls back to
+   * the text colour there (dark mode keeps white — it is perfectly legible).
+   * Filled accent surfaces (buttons, FABs, selected chips) pair their
+   * `bg-accent` with {@link accentContrast} instead.
    */
   accentFg: string;
   /**
    * Text/icon colour **on top of a filled accent surface** — the
    * `contrastText` MUI used to compute: white when the accent is dark
-   * enough (contrast ratio ≥ 3 against white), otherwise 87% black. With
-   * the neutral accent this is white on the near-black light-mode
-   * surface and dark on the white dark-mode surface.
+   * enough (contrast ratio ≥ 3 against white), otherwise 87% black. Never
+   * the accent itself, so a coloured play button wears a dark icon, not a
+   * colour-on-colour one.
    */
   accentContrast: string;
   /**
@@ -62,37 +66,17 @@ export interface ThemeContextValue {
 }
 
 /**
- * The one neutral accent: the body text colour of each resolved theme.
- * Dark mode wears white, light mode wears near-black — the same value as
- * `--app-text` in `theme.ts`, kept in sync here by construction (both
- * read the resolved mode).
- */
-const NEUTRAL_ACCENT = { dark: '#fafafa', light: '#111111' } as const;
-
-/**
- * Relative luminance of a `#rrggbb` colour (0 = black, 1 = white).
- * Used to decide whether an accent survives on a light surface — white does
- * not, and neither does the pale adaptive colour some covers produce.
- */
-function luminance(hex: string): number {
-  const match = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!match) return 1;
-  const value = parseInt(match[1], 16);
-  const channel = (shift: number) => {
-    const c = ((value >> shift) & 0xff) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
-}
-
-/**
- * Theme engine: light / dark / system modes and the interface font. The
- * choice lives in the settings store (SQLite, hydrated in `main.tsx`
- * before the first render) and the system mode follows
- * `prefers-color-scheme` live. There is no coloured accent: the accent
- * token always resolves to the body text colour, so every consumer
- * renders neutral chrome. Low battery mode only affects effects (blur /
- * animation), never colour.
+ * Theme engine: light / dark / system modes, an accent color (manually
+ * picked, or taken from the cover of the song that is playing when
+ * "Adaptive accent color" is on) and the interface font.  The choice lives
+ * in the settings store (SQLite, hydrated in `main.tsx` before the first
+ * render) and the system mode follows `prefers-color-scheme` live.
+ *
+ * Low battery mode outranks both colour settings: it forces adaptive
+ * off and pins the accent to white — manually, or by itself below 20%
+ * battery — and because this component is the only place the accent is
+ * decided (it feeds the `--app-accent` token and the theme-color meta
+ * tag), every consumer follows without knowing the mode exists.
  */
 const ThemeContext = createContext<ThemeContextValue | null>(null);
 
@@ -154,30 +138,25 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
 
   const resolved = mode === 'system' ? (systemDark ? 'dark' : 'light') : mode;
 
-  // The stored accent and the adaptive artwork colour are intentionally
-  // ignored for rendering: the accent token is the body text colour of
-  // the resolved theme in every case, so chrome stays neutral and
-  // unified. Storage keys, the sampler and the Settings switch keep
-  // working unchanged; they simply stop recolouring the app.
-  void accent;
-  void adaptiveColor;
-  void lowBatteryMode;
-  const accentInUse = NEUTRAL_ACCENT[resolved];
-  const accentFg = accentInUse;
+  // Adaptive only wins while it is switched on *and* a cover has actually
+  // been read; otherwise the accent chosen in Settings is what the app wears.
+  // Low battery mode pins that to white, so neither ever shows.
+  const accentInUse = resolveAccentInUse({ lowBatteryMode, adaptiveAccent, adaptiveColor, accent });
+
+  // A white (or near-white) accent painted as text vanishes on the light
+  // surface — fall back to the readable text colour in that one case.
+  const accentFg = resolveAccentFg(resolved, accentInUse);
 
   // MUI's `contrastText`: white on the accent while the contrast ratio
   // against white clears 3 (i.e. the accent is dark enough), otherwise
   // 87% black — the ratio math matches `getContrastRatio` from
   // @mui/material so every filled surface keeps its old legibility.
-  const accentContrast =
-    1.05 / (luminance(accentInUse) + 0.05) >= 3 ? '#ffffff' : 'rgba(0,0,0,0.87)';
+  const accentContrast = resolveAccentContrast(accentInUse);
 
   useEffect(() => {
-    // The browser chrome colour follows the ground: near-black in dark
-    // mode, near-white in light mode — never a hue.
     const meta = document.querySelector('meta[name="theme-color"]');
-    if (meta) meta.setAttribute('content', resolved === 'dark' ? '#050505' : '#fbfbfb');
-  }, [resolved]);
+    if (meta) meta.setAttribute('content', accentInUse);
+  }, [accentInUse]);
 
   /**
    * Publish the live theme onto `<html>`: `data-theme` drives the `dark:`

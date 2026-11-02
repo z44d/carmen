@@ -48,11 +48,12 @@ def _parse_result(raw, duration_seconds):
     return parsed
 
 
-def _call_provider(provider_id, video_id, title, artist, album, duration_seconds, api_key, want_all):
+def _call_provider(provider_id, video_id, title, artist, album, duration_seconds, api_key, want_all, browse_id=None):
     """Run one provider (single or all variants) and parse its results."""
     if want_all:
         raws = call_get_all_lyrics(
-            provider_id, video_id, title, artist, album, duration_seconds, api_key
+            provider_id, video_id, title, artist, album, duration_seconds, api_key,
+            browse_id=browse_id,
         )
         parsed_results = []
         for raw in raws or []:
@@ -61,17 +62,18 @@ def _call_provider(provider_id, video_id, title, artist, album, duration_seconds
                 parsed_results.append(parsed)
         return parsed_results
     raw = call_get_lyrics(
-        provider_id, video_id, title, artist, album, duration_seconds, api_key
+        provider_id, video_id, title, artist, album, duration_seconds, api_key,
+        browse_id=browse_id,
     )
     parsed = _parse_result(raw, duration_seconds)
     return [parsed] if parsed is not None else []
 
 
-def _safe_call(provider_id, video_id, title, artist, album, duration_seconds, api_key, want_all):
+def _safe_call(provider_id, video_id, title, artist, album, duration_seconds, api_key, want_all, browse_id=None):
     try:
         return _call_provider(
             provider_id, video_id, title, artist, album,
-            duration_seconds, api_key, want_all,
+            duration_seconds, api_key, want_all, browse_id=browse_id,
         )
     except Exception as exc:  # noqa: BLE001 — a provider must never break the chain
         log.debug("lyrics provider %s failed: %s", provider_id, exc)
@@ -186,10 +188,14 @@ def run_chain(
     lyrics_order: list[str] | None = None,
     lyrics_enabled: set[str] | None = None,
     paxsenix_key: str | None = None,
+    browse_id: str | None = None,
 ):
     """Best parsed lyrics across providers, or ``None``.
 
     Returns ``{"provider", "name", "synced", "unsynced", "quality"}``.
+    ``browse_id`` is the lyrics browse id (``MPLYt…``) threaded to the
+    YouTube Music provider; without it that provider resolves it from
+    the video id itself.
     """
     order = resolve_order(lyrics_order, lyrics_enabled)
     order = [pid for pid in order if is_available(pid, paxsenix_key)]
@@ -201,7 +207,7 @@ def run_chain(
         return pool.submit(
             _safe_call,
             provider_id, video_id, title, artist, album, duration,
-            paxsenix_key, False,
+            paxsenix_key, False, browse_id,
         )
 
     results, _finished = _collect_with_budget(submit, order, want_all=False)
@@ -228,6 +234,7 @@ def run_chain_all(
     lyrics_order: list[str] | None = None,
     lyrics_enabled: set[str] | None = None,
     paxsenix_key: str | None = None,
+    browse_id: str | None = None,
 ):
     """Every provider's parsed results, in registry order, deduplicated.
 
@@ -235,7 +242,8 @@ def run_chain_all(
     "unsynced", "quality"}`` — one entry per selected provider, including
     providers that returned nothing (``synced``/``unsynced`` ``None``).
     Dedup drops later entries whose (synced, unsynced) pair is identical
-    to an earlier one.
+    to an earlier one. ``browse_id`` is threaded to the YouTube Music
+    provider as in :func:`run_chain`.
     """
     order = resolve_order(lyrics_order, lyrics_enabled)
     if not order:
@@ -248,7 +256,7 @@ def run_chain_all(
         return pool.submit(
             _safe_call,
             provider_id, video_id, title, artist, album, duration,
-            paxsenix_key, True,
+            paxsenix_key, True, browse_id,
         )
 
     results, _finished = _collect_with_budget(submit, runnable, want_all=True)

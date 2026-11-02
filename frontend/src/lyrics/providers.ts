@@ -5,8 +5,10 @@
  * whose hosts send no CORS headers for this origin cannot be read
  * cross-origin (BetterLyrics/Portato, KuGou, Megalobiz, SimpMusic);
  * the chain treats those failures like any other provider failure and
- * the picker falls back to the server endpoint for exactly those ids.
- * No public CORS proxy is used anywhere.
+ * the picker falls back to the server endpoint for providers that
+ * returned no lyrics. A public CORS relay (AllOrigins, then Codetabs
+ * — see `http.ts`) is tried for those origins before the server
+ * fallback; Paxsenix never goes through a relay.
  *
  * Headers follow the browser limits: `User-Agent` is never set (a
  * forbidden fetch header, silently ignored) and `Content-Type` is
@@ -24,6 +26,7 @@ import {
   type FetchParams,
 } from './http';
 import { isLineSyncedLrc } from './parse';
+import { isQrc } from './qrc';
 
 export interface ProviderContext {
   videoId: string;
@@ -50,6 +53,10 @@ export interface ProviderDefinition {
   name: string;
   requiresKey: boolean;
   alwaysUnavailable: boolean;
+  /** Server-only providers never run in the browser; the picker merges
+   * their server result instead (YouTube Music, whose lyrics come
+   * from the server's mobile-browse path). */
+  serverOnly?: boolean;
   getLyrics: ProviderFetch;
   getAllLyrics: ProviderFetchAll;
 }
@@ -100,16 +107,31 @@ function isTtmlPayload(value: string): boolean {
   return TTML_ROOT_RE.test(stripped);
 }
 
+/**
+ * Whether *value* is itself a QRC document (not a JSON envelope).
+ * The `qq/getLyrics` (Portato) endpoint returns QRC inside the
+ * `lyrics` envelope key; QRC is a first-class lyric format for the
+ * chain parser (`qrc.ts`), so a QRC payload is valid content exactly
+ * like a TTML one. The raw-envelope check is gated on the text
+ * starting with `<`: a JSON envelope merely *contains* the QRC
+ * markers inside its escaped string, and must still go through the
+ * unwrap branch so the parser receives the QRC text itself.
+ */
+function isQrcPayload(value: string): boolean {
+  return value.trimStart().startsWith('<') && isQrc(value);
+}
+
 function decodeLyrics(responseText: string): { content: string; score: number | null } | null {
   const raw = responseText.startsWith('﻿') ? responseText.slice(1) : responseText;
   if (isTtmlPayload(raw)) return { content: raw, score: null };
+  if (isQrcPayload(raw)) return { content: raw, score: null };
   const root = parseJsonLenient(responseText);
   if (root == null) return null;
   let score: number | null = null;
   if (typeof root === 'object' && !Array.isArray(root)) {
     const dict = root as Record<string, unknown>;
     const ttmlValue = dict.ttml ?? dict.lyrics ?? '';
-    if (typeof ttmlValue === 'string' && isTtmlPayload(ttmlValue)) {
+    if (typeof ttmlValue === 'string' && (isTtmlPayload(ttmlValue) || isQrc(ttmlValue))) {
       const s = dict.score;
       score = typeof s === 'number' ? s : null;
       return { content: ttmlValue, score };
@@ -144,7 +166,7 @@ function decodeElement(
     return { content: decoded.content, score: score ?? decoded.score };
   }
   if (typeof element === 'string') {
-    if (isTtmlPayload(element)) return { content: element, score: null };
+    if (isTtmlPayload(element) || isQrc(element)) return { content: element, score: null };
     if (depth < MAX_RESPONSE_UNWRAP_DEPTH) {
       const nested = parseJsonLenient(element);
       if (nested == null) return null;
@@ -694,35 +716,34 @@ const kugouGetAll: ProviderFetchAll = async (ctx, signal) => {
 };
 
 // ── Megalobiz ──────────────────────────────────────────────────────────────
+// Megalobiz public lyrics API (no key needed). The old
+// `www.megalobiz.com/searchall` HTML scrape is dead: the site was
+// rebuilt as a Next.js app and `/searchall` answers 404, with no
+// `/lrc/maker/download/` links anywhere in the markup. The documented
+// anonymous API (GET https://api.megalobiz.com/api/public/v1) returns
+// scored search results; the first result's LRC document is fetched
+// and returned only when it is line-synced LRC, as before.
 
-const MEGALOBIZ_LRC_PATH_RE = /href=["'](\/lrc\/maker\/download\/[^"']+)["']/;
-const MEGALOBIZ_LRC_SPAN_RE = /id=["']lrc_[^"']*_details["'][^>]*>(.*?)<\/span>/s;
-const MEGALOBIZ_HTML_TAG_RE = /<[^>]+>/g;
+const MEGALOBIZ_API = 'https://api.megalobiz.com/api/public/v1';
 
 const megalobizGet: ProviderFetch = async (ctx, signal) => {
-  const { title, artist } = cleanCtx(ctx);
-  {
-    const query = `${artist} ${title}`.trim();
-    const searchUrl = `https://www.megalobiz.com/searchall?qry=${encodeURIComponent(query)}`;
-    const search = await fetchTextWithRelay(searchUrl, undefined, undefined, signal);
-    if (search.status < 200 || search.status > 299) return null;
-    const match = MEGALOBIZ_LRC_PATH_RE.exec(search.text);
-    if (!match) return null;
-    const detail = await fetchTextWithRelay(`https://www.megalobiz.com${match[1]}`, undefined, undefined, signal);
-    if (detail.status < 200 || detail.status > 299) return null;
-    const spanMatch = MEGALOBIZ_LRC_SPAN_RE.exec(detail.text);
-    const rawLrcText = spanMatch ? spanMatch[1] : detail.text;
-    const cleaned = rawLrcText
-      .replace(/&lt;/g, '<')
-      .replace(/&gt;/g, '>')
-      .replace(/&amp;/g, '&')
-      .replace(/<br>/g, '\n')
-      .replace(/<br\/>/g, '\n')
-      .replace(/<br \/>/g, '\n')
-      .replace(MEGALOBIZ_HTML_TAG_RE, '')
-      .trim();
-    return isLineSyncedLrc(cleaned) ? cleaned : null;
-  }
+  const { title, artist, durationSeconds } = cleanCtx(ctx);
+  if (!title || !artist) return null;
+  const params: FetchParams = { title, artist };
+  if (durationSeconds != null && durationSeconds > 0) params.duration = durationSeconds;
+  const search = await fetchTextWithRelay(`${MEGALOBIZ_API}/search`, params, undefined, signal);
+  if (search.status < 200 || search.status > 299) return null;
+  const payload = parseJsonLenient(search.text);
+  if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
+  const results = (payload as Record<string, unknown>).results;
+  if (!Array.isArray(results) || !results.length) return null;
+  const first = results[0] as Record<string, unknown> | undefined;
+  const id = first?.id;
+  if (id == null) return null;
+  const detail = await fetchTextWithRelay(`${MEGALOBIZ_API}/lrc/${id}`, { format: 'lrc' }, undefined, signal);
+  if (detail.status < 200 || detail.status > 299) return null;
+  const cleaned = detail.text.trim();
+  return isLineSyncedLrc(cleaned) ? cleaned : null;
 };
 
 // ── SimpMusic ──────────────────────────────────────────────────────────────
@@ -1303,7 +1324,10 @@ async function buildRegistry(): Promise<ProviderDefinition[]> {
     { id: 'paxsenix-spotify', name: 'Paxsenix: Spotify', requiresKey: true, alwaysUnavailable: false, getLyrics: paxSpotify.getLyrics, getAllLyrics: paxSpotify.getAllLyrics },
     { id: 'paxsenix-musixmatch', name: 'Paxsenix: Musixmatch', requiresKey: true, alwaysUnavailable: false, getLyrics: paxMusixmatch.getLyrics, getAllLyrics: paxMusixmatch.getAllLyrics },
     { id: 'youtube-subtitle', name: 'YouTube Subtitle', requiresKey: false, alwaysUnavailable: true, getLyrics: youtubeGet, getAllLyrics: youtubeGetAll },
-    { id: 'youtube-music', name: 'YouTube Music', requiresKey: false, alwaysUnavailable: true, getLyrics: youtubeGet, getAllLyrics: youtubeGetAll },
+    // Server-only: the browser has no PoToken-free YouTube Music
+    // path; the server fetches it from the mobile-browse endpoint.
+    // The picker merges the server result for this id.
+    { id: 'youtube-music', name: 'YouTube Music', requiresKey: false, alwaysUnavailable: false, serverOnly: true, getLyrics: youtubeGet, getAllLyrics: youtubeGetAll },
   ];
 }
 

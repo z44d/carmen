@@ -867,8 +867,13 @@ def _run_lyrics_chain(
     lyrics_order: list[str] | None,
     lyrics_enabled: set[str] | None,
     paxsenix_key: str | None,
+    browse_id: str | None = None,
 ):
-    """Best result from the new provider chain, or ``None`` on any failure."""
+    """Best result from the new provider chain, or ``None`` on any failure.
+
+    ``browse_id`` is threaded to the YouTube Music provider so it can
+    fetch the same mobile-browse lyrics without a second lookup.
+    """
     try:
         from .lyrics.chain import run_chain
     except Exception:  # noqa: BLE001
@@ -883,6 +888,7 @@ def _run_lyrics_chain(
             lyrics_order=lyrics_order,
             lyrics_enabled=lyrics_enabled,
             paxsenix_key=paxsenix_key,
+            browse_id=browse_id,
         )
     except Exception:  # noqa: BLE001 — a chain failure must never break track
         return None
@@ -897,6 +903,7 @@ def get_provider_lyrics(
     lyrics_order: list[str] | None = None,
     lyrics_enabled: set[str] | None = None,
     paxsenix_key: str | None = None,
+    browse_id: str | None = None,
 ) -> dict:
     """
     Every chain provider's parsed lyrics for a track (the picker path).
@@ -904,6 +911,8 @@ def get_provider_lyrics(
     Returns ``{"results": [...]}``; see :func:`server.lyrics.chain.
     run_chain_all` for the entry shape. When the chain cannot run at all,
     every provider is still listed with null lyrics and its availability.
+    ``browse_id`` is threaded to the YouTube Music provider; without
+    it that provider resolves the browse id from the video id itself.
     """
     try:
         from .lyrics import is_available, resolve_order
@@ -921,6 +930,7 @@ def get_provider_lyrics(
                 lyrics_order=lyrics_order,
                 lyrics_enabled=lyrics_enabled,
                 paxsenix_key=paxsenix_key,
+                browse_id=browse_id,
             )
         }
     except Exception:  # noqa: BLE001
@@ -974,7 +984,10 @@ def _collect_lyrics(
     Sources are tried, in order:
 
     1. the new provider chain (``server/lyrics`` — the Android providers
-       ported to the server), in the requested order / enabled set;
+       ported to the server), in the requested order / enabled set.
+       The YouTube Music chain provider reuses steps 2–3 below
+       through the threaded browse id, so a chain win from it is
+       never fetched twice;
     2. the mobile innertube ``browse`` endpoint, which is the only one that
        returns line timestamps (``ytmusicapi``'s own timed call fails with
        HTTP 400 because it pairs the web ``Authorization`` header with a
@@ -1032,6 +1045,7 @@ def _collect_lyrics(
             [provider],
             {provider},
             paxsenix_key,
+            browse_id=browse_id,
         )
         if chain_result:
             lyrics["synced"] = chain_result["synced"]
@@ -1049,6 +1063,7 @@ def _collect_lyrics(
         lyrics_order,
         lyrics_enabled,
         paxsenix_key,
+        browse_id=browse_id,
     )
     if chain_result:
         lyrics["synced"] = chain_result["synced"]
@@ -1056,7 +1071,14 @@ def _collect_lyrics(
         lyrics["source"] = chain_result["name"]
         lyrics["provider"] = chain_result["provider"]
 
-    if browse_id and (not lyrics["synced"] or not lyrics["unsynced"]):
+    # When the chain winner is YouTube Music, the mobile-browse and
+    # plain lyrics below were already fetched by that provider — do
+    # not fetch them a second time. (The winner may also be any other
+    # provider; the guards below already skip a fetch whose result
+    # the chain supplied.)
+    if browse_id and (not lyrics["synced"] or not lyrics["unsynced"]) and (
+        not chain_result or chain_result.get("provider") != "youtube-music"
+    ):
         payload = _browse_mobile(browse_id) if not lyrics["synced"] else None
         if payload:
             data = _dig(payload, _TIMED_LYRICS_PATH)
