@@ -686,13 +686,7 @@ class LyricsTranslateRequest(BaseModel):
     target: str
 
 
-@cached(
-    "lyrics_providers",
-    ttl=604800,
-    id_arg="videoId",
-    extra_args=("title", "artist", "album", "duration", "lyricsOrder", "lyricsEnabled"),
-)
-async def _cached_provider_lyrics(
+async def _provider_lyrics(
     videoId: str,
     title: str,
     artist: str,
@@ -701,7 +695,7 @@ async def _cached_provider_lyrics(
     lyricsOrder: str | None,
     lyricsEnabled: str | None,
 ):
-    """Cached picker payload; used only when no Paxsenix key is supplied."""
+    """Picker payload; used only when no Paxsenix key is supplied."""
     order = _parse_id_list(lyricsOrder)
     enabled = _parse_id_list(lyricsEnabled)
     loop = asyncio.get_running_loop()
@@ -746,15 +740,13 @@ async def lyrics_providers(
     unsynced lyrics (null when that provider has none). Results follow
     the requested order, deduplicated on identical lyrics.
 
-    The response is cached for a week — but only when no ``paxsenixKey``
-    is supplied. When a key is supplied, caching is bypassed entirely
-    (the key must never be part of any cache key).
+    Nothing is cached — every request runs the provider chain fresh.
 
     - **videoId**: YouTube video ID (needed by SimpMusic / Unison)
     - **title** / **artist** / **album**: track metadata for searching
     - **duration**: track length in seconds
     - **lyricsOrder** / **lyricsEnabled**: comma-separated chain ids
-    - **paxsenixKey**: Paxsenix API key; never logged, never cached
+    - **paxsenixKey**: Paxsenix API key; never logged
     """
     order = _parse_id_list(lyricsOrder)
     _validate_chain_ids(order, "lyricsOrder")
@@ -776,7 +768,7 @@ async def lyrics_providers(
                 paxsenixKey,
             ),
         )
-    return await _cached_provider_lyrics(
+    return await _provider_lyrics(
         videoId=videoId,
         title=title,
         artist=artist,
@@ -838,7 +830,6 @@ async def lyrics_translate(body: LyricsTranslateRequest):
     response_description="Song lyrics or timed lyrics",
 )
 @sanitized
-@cached("lyrics", ttl=604800, id_arg="browseId")
 async def lyrics(browseId: str, timestamps: bool = False):
     """
     Returns lyrics of a song/video.

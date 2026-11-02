@@ -10,7 +10,8 @@ all-results path returns every provider's parsed result, deduplicated on
 identical (synced, unsynced) pairs, in registry order.
 
 Per-provider failures and timeouts never raise. There is no in-memory
-caching here — the route-level ``@cached`` handles that.
+caching here — the lyrics routes serve every request fresh (only the
+enriched ``/track`` payload is cached at the route level).
 """
 
 from __future__ import annotations
