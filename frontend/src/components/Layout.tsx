@@ -121,7 +121,7 @@ function AppHeader() {
   };
 
   return (
-    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100] md:left-[232px]">
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100] md:left-[72px]">
       {/* readability gradient over the hero backdrop — the pills carry
           their own glass, this only keeps the top edge legible */}
       <div
@@ -209,9 +209,11 @@ function BottomNav() {
 }
 
 /**
- * Permanent desktop sidebar: brand, the five sections, and the GitHub
- * credit at the bottom. Full height, fixed width, glass — the content
- * column shifts right by its width (see `Layout`).
+ * Permanent desktop sidebar: an icon-only rail — the logo, the five
+ * sections as icon buttons, and the GitHub link at the bottom. Full
+ * height, fixed 72px width, glass — the content column shifts right by
+ * its width (see `Layout`). Labels stay available to assistive tech and
+ * as hover tooltips; nothing else on desktop shows section text.
  */
 function Sidebar() {
   const location = useLocation();
@@ -220,7 +222,7 @@ function Sidebar() {
     <aside
       aria-label="Primary"
       className={cn(
-        'fixed bottom-0 left-0 top-0 z-[1200] hidden w-[232px] flex-col border-r border-line shadow-glass md:flex',
+        'fixed bottom-0 left-0 top-0 z-[1200] hidden w-[72px] flex-col items-center border-r border-line shadow-glass md:flex',
         effectsEnabled ? 'bg-surface/86' : 'bg-surface',
       )}
       style={{
@@ -228,7 +230,7 @@ function Sidebar() {
         WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
       }}
     >
-      <div className="flex items-center gap-3 px-5 pb-2 pt-[max(20px,var(--sat))]">
+      <div className="flex items-center justify-center pb-2 pt-[max(20px,var(--sat))]">
         <img
           src={LOGO_SRC}
           alt=""
@@ -236,40 +238,41 @@ function Sidebar() {
           draggable={false}
           className="h-9 w-9 shrink-0 rounded-[11px]"
         />
-        <span className="min-w-0 flex-1 text-lg font-extrabold tracking-tight">Carmen</span>
       </div>
-      <nav aria-label="Primary" className="flex flex-col gap-1 px-3 pt-3">
+      <nav aria-label="Primary" className="flex flex-col items-center gap-1 pt-3">
         {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
           const active = location.pathname === path;
           return (
             <NavLink
               key={path}
               to={path}
+              aria-label={label}
               aria-current={active ? 'page' : undefined}
+              title={label}
               className={cn(
-                'flex items-center gap-3 rounded-full px-4 py-3 text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                'flex h-12 w-12 items-center justify-center rounded-full text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
                 active
                   ? 'bg-accent/15 text-accent-fg'
                   : 'text-body hover:bg-hover',
               )}
             >
               <Icon className="shrink-0" />
-              {label}
+              <span className="sr-only">{label}</span>
             </NavLink>
           );
         })}
       </nav>
-      <div className="mt-auto px-5 pb-[max(20px,env(safe-area-inset-bottom))]">
+      <div className="mt-auto flex flex-col items-center gap-3 pb-[max(20px,env(safe-area-inset-bottom))] pt-4">
         <a
           href={REPO_URL}
           target="_blank"
           rel="noreferrer"
-          className="flex items-center gap-2 border-t border-line pt-4 text-[13px] font-semibold leading-[1.4] text-muted no-underline transition-colors hover:text-body focus-visible:outline-2 focus-visible:outline-accent"
+          aria-label="Carmen on GitHub"
+          title="Carmen on GitHub"
+          className="flex h-12 w-12 items-center justify-center rounded-full border-t border-line text-muted no-underline transition-colors hover:text-body focus-visible:outline-2 focus-visible:outline-accent"
         >
           <GitHubIcon fontSize="small" className="shrink-0" />
-          Carmen on GitHub
         </a>
-        <p className="m-0 mt-1 text-[13px] leading-[1.4] text-muted">Your music, everywhere.</p>
       </div>
     </aside>
   );
@@ -366,7 +369,7 @@ export default function Layout() {
       {/* The content column shifts right by the sidebar width on
           desktop (the sidebar itself is fixed); the home hero's negative
           top margin is untouched by the horizontal shift. */}
-      <div className="flex min-w-0 flex-1 flex-col md:pl-[232px]">
+      <div className="flex min-w-0 flex-1 flex-col md:pl-[72px]">
         {/* the app's single vertical scroller — pages lay out inside it;
             `id="app-main"` lets HomePage's pull-to-refresh read its position.
             Top padding clears the floating header; the home hero cancels
