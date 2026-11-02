@@ -2,7 +2,6 @@
  * Minimal API client for the FastAPI backend.
  */
 import { getSettingsSnapshot } from './settings/store';
-import type { ProviderLyricsResult } from './types/models';
 
 const ENV_BASE = import.meta.env.VITE_API_BASE || 'https://api-carmen-v1.syr.qzz.io';
 
@@ -139,38 +138,4 @@ export async function fetchTrackMeta(
   });
   trackMetaCache.set(key, request);
   return request;
-}
-
-/** Every enabled provider's lyrics for one song (the picker source). */
-export async function fetchLyricsProviders(
-  query: {
-    videoId: string;
-    title?: string;
-    artist?: string;
-    album?: string;
-    duration?: number;
-    order?: string[];
-    enabled?: Record<string, boolean>;
-    paxsenixKey?: string;
-  },
-  signal?: AbortSignal,
-): Promise<{ results: ProviderLyricsResult[] }> {
-  const enabledIds = query.order
-    ? query.order.filter((id) => query.enabled?.[id] !== false)
-    : undefined;
-  const trimmedKey = query.paxsenixKey?.trim() || undefined;
-  return apiGet(
-    '/browsing/lyrics/providers',
-    {
-      videoId: query.videoId,
-      title: query.title,
-      artist: query.artist,
-      album: query.album,
-      duration: query.duration,
-      ...(query.order?.length ? { lyricsOrder: query.order.join(',') } : {}),
-      ...(enabledIds?.length ? { lyricsEnabled: enabledIds.join(',') } : {}),
-      ...(trimmedKey ? { paxsenixKey: trimmedKey } : {}),
-    },
-    signal,
-  );
 }

@@ -1,14 +1,21 @@
 /**
- * Client-side lyrics providers — a TypeScript port of `server/lyrics/*.py`.
+ * Client-side lyrics providers — every provider runs directly in the
+ * browser with `fetch`. There is no server fallback: the picker, the
+ * pin flow and the lyrics panel all run this chain and nothing else.
  *
- * Every provider runs directly in the browser with `fetch`. Providers
- * whose hosts send no CORS headers for this origin cannot be read
- * cross-origin (BetterLyrics/Portato, KuGou, Megalobiz, SimpMusic);
- * the chain treats those failures like any other provider failure and
- * the picker falls back to the server endpoint for providers that
- * returned no lyrics. A public CORS relay (AllOrigins, then Codetabs
- * — see `http.ts`) is tried for those origins before the server
- * fallback; Paxsenix never goes through a relay.
+ * Providers whose hosts send no CORS headers for this origin cannot
+ * be read cross-origin (BetterLyrics/Portato, KuGou, Megalobiz,
+ * SimpMusic); a public CORS relay (AllOrigins, then cors.dev — see
+ * `http.ts`) is tried for those origins before the provider is
+ * reported empty. Paxsenix never goes through a relay.
+ *
+ * YouTube Music and YouTube Subtitle run in the browser too (see
+ * `youtube.ts`): the watch page (GET, via the relay layer) plus
+ * Innertube POSTs with the public WEB client. Whether YouTube
+ * answers a foreign origin's POST readably is decided by its CORS
+ * headers and cannot be proven from the sandbox — the GET fallbacks
+ * (caption timedtext, browse-page lyrics) are what carry those two
+ * providers when the POST path is blocked.
  *
  * Headers follow the browser limits: `User-Agent` is never set (a
  * forbidden fetch header, silently ignored) and `Content-Type` is
@@ -27,6 +34,12 @@ import {
 } from './http';
 import { isLineSyncedLrc } from './parse';
 import { isQrc } from './qrc';
+import {
+  getSubtitleStatus,
+  getYoutubeMusicLyrics,
+  getYoutubeSubtitleLyrics,
+  type YoutubeQuery,
+} from './youtube';
 
 export interface ProviderContext {
   videoId: string;
@@ -53,10 +66,12 @@ export interface ProviderDefinition {
   name: string;
   requiresKey: boolean;
   alwaysUnavailable: boolean;
-  /** Server-only providers never run in the browser; the picker merges
-   * their server result instead (YouTube Music, whose lyrics come
-   * from the server's mobile-browse path). */
-  serverOnly?: boolean;
+  /**
+   * Reason label for an empty result, when the provider can tell the
+   * difference between "nothing held" and "cannot run here" (YouTube
+   * Subtitle: no captions vs gated). `null` = the generic label.
+   */
+  describeEmpty?: (ctx: ProviderContext) => string | null;
   getLyrics: ProviderFetch;
   getAllLyrics: ProviderFetchAll;
 }
@@ -1296,10 +1311,23 @@ function wrapPaxsenix(getter: ProviderFetch): { getLyrics: ProviderFetch; getAll
   return { getLyrics, getAllLyrics };
 }
 
-// ── YouTube (unavailable) ──────────────────────────────────────────────────
+// ── YouTube (browser) ────────────────────────────────────────────────────
 
-const youtubeGet: ProviderFetch = async () => null;
-const youtubeGetAll: ProviderFetchAll = async () => [];
+function toYoutubeQuery(ctx: ProviderContext): YoutubeQuery {
+  const clean = cleanCtx(ctx);
+  return {
+    videoId: clean.videoId,
+    title: clean.title,
+    artist: clean.artist,
+    album: clean.album,
+    durationSeconds: clean.durationSeconds,
+  };
+}
+
+const youtubeSubtitleGet: ProviderFetch = (ctx, signal) =>
+  getYoutubeSubtitleLyrics(toYoutubeQuery(ctx), signal);
+const youtubeMusicGet: ProviderFetch = (ctx, signal) =>
+  getYoutubeMusicLyrics(toYoutubeQuery(ctx), signal);
 
 // ── Registry ───────────────────────────────────────────────────────────────
 
@@ -1311,6 +1339,8 @@ async function buildRegistry(): Promise<ProviderDefinition[]> {
   const portatoAll = await singleAsAll(portatoGet);
   const youlyAll = await singleAsAll(youLyPlusGet);
   const megaAll = await singleAsAll(megalobizGet);
+  const subtitleAll = await singleAsAll(youtubeSubtitleGet);
+  const musicAll = await singleAsAll(youtubeMusicGet);
   return [
     { id: 'betterlyrics', name: 'BetterLyrics', requiresKey: false, alwaysUnavailable: false, getLyrics: betterLyricsGet, getAllLyrics: betterAll },
     { id: 'betterlyrics-portato', name: 'BetterLyrics Portato', requiresKey: false, alwaysUnavailable: false, getLyrics: portatoGet, getAllLyrics: portatoAll },
@@ -1323,11 +1353,14 @@ async function buildRegistry(): Promise<ProviderDefinition[]> {
     { id: 'paxsenix-apple-music', name: 'Paxsenix: Apple Music', requiresKey: true, alwaysUnavailable: false, getLyrics: paxApple.getLyrics, getAllLyrics: paxApple.getAllLyrics },
     { id: 'paxsenix-spotify', name: 'Paxsenix: Spotify', requiresKey: true, alwaysUnavailable: false, getLyrics: paxSpotify.getLyrics, getAllLyrics: paxSpotify.getAllLyrics },
     { id: 'paxsenix-musixmatch', name: 'Paxsenix: Musixmatch', requiresKey: true, alwaysUnavailable: false, getLyrics: paxMusixmatch.getLyrics, getAllLyrics: paxMusixmatch.getAllLyrics },
-    { id: 'youtube-subtitle', name: 'YouTube Subtitle', requiresKey: false, alwaysUnavailable: true, getLyrics: youtubeGet, getAllLyrics: youtubeGetAll },
-    // Server-only: the browser has no PoToken-free YouTube Music
-    // path; the server fetches it from the mobile-browse endpoint.
-    // The picker merges the server result for this id.
-    { id: 'youtube-music', name: 'YouTube Music', requiresKey: false, alwaysUnavailable: false, serverOnly: true, getLyrics: youtubeGet, getAllLyrics: youtubeGetAll },
+    { id: 'youtube-subtitle', name: 'YouTube Subtitle', requiresKey: false, alwaysUnavailable: false, getLyrics: youtubeSubtitleGet, getAllLyrics: subtitleAll,
+      describeEmpty: (ctx) => {
+        const status = getSubtitleStatus(ctx.videoId);
+        if (status === 'no-captions') return 'no-captions';
+        if (status === 'gated') return 'gated';
+        return null;
+      } },
+    { id: 'youtube-music', name: 'YouTube Music', requiresKey: false, alwaysUnavailable: false, getLyrics: youtubeMusicGet, getAllLyrics: musicAll },
   ];
 }
 

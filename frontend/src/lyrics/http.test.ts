@@ -28,15 +28,14 @@ afterEach(() => {
 });
 
 describe('relayUrlsFor', () => {
-  it('builds AllOrigins then Codetabs from the full target URL, encoded once', () => {
+  it('builds AllOrigins then cors.dev from the full target URL', () => {
     const target = 'https://lyrics-api.boidu.dev/getLyrics?s=Adele&artist=X%20Y';
     const urls = relayUrlsFor(target);
-    expect(urls.map((entry) => entry.name)).toEqual(['allorigins', 'codetabs']);
+    expect(urls.map((entry) => entry.name)).toEqual(['allorigins', 'corsdev']);
     expect(urls[0].url).toBe(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
-    expect(urls[1].url).toBe(`https://api.codetabs.com/v1/proxy?quest=${encodeURIComponent(target)}`);
-    // The relay query param decodes back to the exact target, query included.
+    expect(urls[1].url).toBe(`https://proxy.cors.dev/${target}`);
+    // The AllOrigins query param decodes back to the exact target, query included.
     expect(new URL(urls[0].url).searchParams.get('url')).toBe(target);
-    expect(new URL(urls[1].url).searchParams.get('quest')).toBe(target);
   });
 });
 
@@ -61,15 +60,36 @@ describe('fetchTextWithRelay', () => {
     expect(new URL(relayUrl).searchParams.get('url')).toContain('/getLyrics?s=Song');
   });
 
-  it('tries Codetabs when AllOrigins fails', async () => {
+  it('tries cors.dev when AllOrigins fails', async () => {
     fetchMock
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
       .mockRejectedValueOnce(new Error('relay down'))
-      .mockResolvedValueOnce(textResponse('via codetabs'));
+      .mockResolvedValueOnce(textResponse('via cors.dev'));
     const result = await fetchTextWithRelay('https://example.test/x');
     expect(result.via).toBe('relay');
-    expect(result.relay).toBe('codetabs');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('api.codetabs.com/v1/proxy?quest=');
+    expect(result.relay).toBe('corsdev');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('proxy.cors.dev/https://example.test/x');
+  });
+
+  it('tries the relays when the direct fetch answers 2xx with an empty body', async () => {
+    fetchMock
+      .mockResolvedValueOnce(textResponse(''))
+      .mockResolvedValueOnce(textResponse('[00:01.00]Hi'));
+    const result = await fetchTextWithRelay('https://example.test/x');
+    expect(result.via).toBe('relay');
+    expect(result.text).toBe('[00:01.00]Hi');
+  });
+
+  it('skips a relay that answers 2xx with an empty body and tries the next', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(textResponse(''))
+      .mockResolvedValueOnce(textResponse('real'));
+    const result = await fetchTextWithRelay('https://example.test/x');
+    expect(result.via).toBe('relay');
+    expect(result.relay).toBe('corsdev');
+    expect(result.text).toBe('real');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
   it('rethrows the direct error when direct and both relays fail', async () => {

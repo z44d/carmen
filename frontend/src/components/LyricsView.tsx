@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
-import { fetchTrackMeta } from '../api';
 import { fetchClientBestLyrics, fetchClientProviderLyrics } from '../lyrics/chain';
-import { inferLyricsQuality } from '../lyrics/parse';
 import { usePlayer } from '../player/PlayerContext';
 import { useSettings } from '../settings/store';
 import type { LyricLine, TrackLyrics } from '../types/models';
@@ -19,7 +17,7 @@ interface LyricsViewProps {
   unsynced?: string | null;
   /** Attribution of the lyrics provider, shown under the text. */
   source?: string | null;
-  /** Chain provider id behind these lyrics, when the server reports it. */
+  /** Chain provider id behind these lyrics, when known. */
   provider?: string | null;
   /** True while the track metadata — and with it the lyrics — is loading. */
   loading?: boolean;
@@ -104,6 +102,8 @@ export default function LyricsView({
   const [pinnedLoading, setPinnedLoading] = useState(false);
   /** Best client-chain lyrics for this song, fetched in the background. */
   const [clientLyrics, setClientLyrics] = useState<TrackLyrics | null>(null);
+  /** Whether the client chain has finished for this song. */
+  const [clientDone, setClientDone] = useState(false);
 
   const videoId = track?.videoId ?? current?.videoId ?? null;
 
@@ -111,13 +111,14 @@ export default function LyricsView({
     setPinnedProvider(null);
     setPinnedLyrics(null);
     setClientLyrics(null);
+    setClientDone(false);
     setPickerOpen(false);
   }, [videoId]);
 
-  // A pinned provider first tries the client chain for that single
-  // provider (direct, then CORS relay), falling back to the server
-  // metadata fetch with the pin only when the client returns nothing
-  // for it. The global order/enabled/key travel along unchanged.
+  // A pinned provider runs the client chain for that single provider
+  // only (direct, then CORS relay). There is no server pin: when the
+  // client returns nothing for it, the pin shows the empty state.
+  // The global order/enabled/key travel along unchanged.
   useEffect(() => {
     if (!pinnedProvider || !videoId) return undefined;
     let cancelled = false;
@@ -137,32 +138,19 @@ export default function LyricsView({
             provider: pinnedProvider,
           },
         );
-        if (!cancelled && client) {
-          setPinnedLyrics({
-            synced: client.synced,
-            unsynced: client.unsynced,
-            source: client.name,
-            provider: client.provider,
-          });
-          setPinnedLoading(false);
-          return;
-        }
-      } catch {
-        // Fall through to the server pin below.
-      }
-      if (cancelled) return;
-      try {
-        const payload = await fetchTrackMeta(videoId, {
-          provider: pinnedProvider,
-          order: lyricsProviderOrder,
-          enabled: lyricsProvidersEnabled,
-          ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
-        });
         if (cancelled) return;
-        setPinnedLyrics(payload?.lyrics ?? null);
+        setPinnedLyrics(
+          client
+            ? {
+                synced: client.synced,
+                unsynced: client.unsynced,
+                source: client.name,
+                provider: client.provider,
+              }
+            : null,
+        );
       } catch {
-        if (cancelled) return;
-        setPinnedLyrics(null);
+        if (!cancelled) setPinnedLyrics(null);
       }
       if (!cancelled) setPinnedLoading(false);
     })();
@@ -175,12 +163,12 @@ export default function LyricsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pinnedProvider, videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey, track?.title, track?.artist, track?.album, track?.durationSeconds]);
 
-  // Background client best-match: run the same chain the picker uses
-  // (same order/enabled/key, aborted on song change) and replace the
-  // server lyrics ONLY when the client quality is strictly greater
-  // than the server's (or the server has none). Equal quality keeps
-  // the server result, so nothing flickers. The server translate
-  // path and PlayerContext's metadata fetch are untouched.
+  // Background client best-match: the same chain the picker uses
+  // (same order/enabled/key, aborted on song change). The client
+  // chain IS the lyrics source — when it has finished, its result
+  // (or its empty result) wins over the metadata payload's lyrics,
+  // which arrive only as an offline/downloaded bonus. Until it
+  // finishes, the payload lyrics stand so nothing flickers.
   useEffect(() => {
     if (!videoId) return undefined;
     let cancelled = false;
@@ -197,16 +185,19 @@ export default function LyricsView({
       },
     )
       .then((best) => {
-        if (cancelled || !best) return;
-        setClientLyrics({
-          synced: best.synced,
-          unsynced: best.unsynced,
-          source: best.name,
-          provider: best.provider,
-        });
+        if (cancelled) return;
+        if (best) {
+          setClientLyrics({
+            synced: best.synced,
+            unsynced: best.unsynced,
+            source: best.name,
+            provider: best.provider,
+          });
+        }
+        setClientDone(true);
       })
       .catch(() => {
-        // Client chain unavailable: the server lyrics stand.
+        if (!cancelled) setClientDone(true);
       });
     return () => {
       cancelled = true;
@@ -215,12 +206,11 @@ export default function LyricsView({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey, track?.title, track?.artist, track?.album, track?.durationSeconds]);
 
-  const serverQuality = inferLyricsQuality(synced, unsynced);
-  const clientQuality = clientLyrics
-    ? inferLyricsQuality(clientLyrics.synced, clientLyrics.unsynced)
-    : -1;
-  const useClientLyrics =
-    !pinnedProvider && clientLyrics != null && (serverQuality === -1 || clientQuality > serverQuality);
+  const useClientLyrics = !pinnedProvider && clientDone && clientLyrics != null;
+  // Once the client chain has finished empty, the payload lyrics
+  // (downloaded/offline copies only — the lyrics path itself never
+  // fetches them) stand as a bonus; before it finishes, they stand
+  // so the panel is not blank while the chain runs.
   const effectiveSynced = pinnedProvider ? pinnedLyrics?.synced : useClientLyrics ? clientLyrics?.synced : synced;
   const effectiveUnsynced = pinnedProvider
     ? pinnedLyrics?.unsynced

@@ -59,17 +59,19 @@ export interface ClientBestLyrics {
 export interface ClientProviderEntry extends ProviderLyricsResult {
   /**
    * Whether the provider failed after every browser layer:
-   * direct fetch AND both CORS relays (transport/CORS/network/
+   * direct fetch AND every CORS relay (transport/CORS/network/
    * timeout). A provider that answered — even with a non-2xx
-   * status or no lyrics — is not marked failed here; the picker
-   * still sends empty providers to the server fallback, because
-   * an answer the browser cannot read (CORS/rate-limit page) may
-   * succeed from the server.
+   * status or no lyrics — is not marked failed here. There is no
+   * further fallback: this is the whole lyrics path.
    */
   directFailed: boolean;
-  /** Server-only providers never run in the browser (YouTube Music). */
-  serverOnly: boolean;
   quality: number | null;
+  /**
+   * Machine-readable empty reason from the provider (`no-captions`
+   * / `gated` for YouTube Subtitle), for the picker's reason label.
+   * Absent = the generic "no lyrics found" label.
+   */
+  emptyReason?: string | null;
 }
 
 function toContext(query: ClientLyricsQuery): ProviderContext {
@@ -278,10 +280,7 @@ async function runChainInternal(
 
   const runnable = order.filter((id) => {
     const def = byId.get(id);
-    // Server-only providers never run in the browser; their entry
-    // is built below with available:false and serverOnly:true so the
-    // picker merges the server result for them.
-    return def != null && !def.serverOnly && isProviderAvailable(def, ctx.paxsenixKey);
+    return def != null && isProviderAvailable(def, ctx.paxsenixKey);
   });
 
   const jobs = runnable.map((providerId, index) => {
@@ -316,7 +315,7 @@ async function runChainInternal(
   for (const providerId of order) {
     const def = byId.get(providerId);
     const name = def?.name ?? providerName(providerId);
-    const available = def != null && !def.serverOnly && isProviderAvailable(def, ctx.paxsenixKey);
+    const available = def != null && isProviderAvailable(def, ctx.paxsenixKey);
     if (!available) {
       entries.push({
         provider: providerId,
@@ -326,8 +325,8 @@ async function runChainInternal(
         unsynced: null,
         source: null,
         directFailed: false,
-        serverOnly: def?.serverOnly ?? false,
         quality: null,
+        emptyReason: null,
       });
       continue;
     }
@@ -342,8 +341,8 @@ async function runChainInternal(
         unsynced: null,
         source: null,
         directFailed: wasFailed,
-        serverOnly: false,
         quality: null,
+        emptyReason: def?.describeEmpty?.(ctx) ?? null,
       });
       continue;
     }
@@ -359,15 +358,13 @@ async function runChainInternal(
         unsynced: parsed.unsynced,
         source: name,
         directFailed: false,
-        serverOnly: false,
         quality: parsed.quality,
+        emptyReason: null,
       });
     }
   }
   // Providers whose fetch failed but which also produced a parsed
-  // result (partial) are not "failed" for fallback purposes. The
-  // picker sends every empty provider (failed, answered-empty, or
-  // server-only) to the server fallback; directFailed only records
+  // result (partial) are not "failed": directFailed only records
   // that the browser layers themselves failed.
 
   let best: ClientBestLyrics | null = null;

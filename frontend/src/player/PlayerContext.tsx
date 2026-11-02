@@ -199,11 +199,9 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
   /** True once the startup restore finished — persistence starts then. */
   const [restored, setRestored] = useState(false);
 
-  // Lyrics chain preferences (Android model): order + enable switches +
-  // the optional Paxsenix key. Any change re-fetches the current song's
-  // lyrics under the new chain; the old single-provider key is no longer
-  // read here (it lives on only as a migrated setting).
-  const { lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey } = useSettings();
+  // Lyrics chain preferences live in Settings and are consumed by
+  // the client-side chain in LyricsView / the picker — not here.
+  // This context fetches only track metadata (see below).
 
   // While "Adaptive accent color" is on, the cover of the playing song sets
   // the theme's accent (see theme/adaptiveAccent).
@@ -613,11 +611,11 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
       return undefined;
     }
     let cancelled = false;
-    const chainOptions = {
-      order: lyricsProviderOrder,
-      enabled: lyricsProvidersEnabled,
-      ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
-    };
+    // Lyrics are fully client-side now (see LyricsView): this fetch
+    // is only for the track metadata (thumbnails, duration). No
+    // lyrics-chain options travel with it — in particular the
+    // Paxsenix key is never sent to the server; it goes direct to
+    // Paxsenix from the browser chain only.
 
     const mergeLocal = async (payload: TrackMeta | null): Promise<TrackMeta | null> => {
       try {
@@ -632,7 +630,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     };
 
     const fetchRemote = (): void => {
-      fetchTrackMeta(videoId, chainOptions)
+      fetchTrackMeta(videoId)
         .then(async (payload) => {
           if (cancelled) return;
           setMeta(await mergeLocal(payload));
@@ -691,7 +689,7 @@ export function PlayerProvider({ children }: { children: ReactNode }) {
     return () => {
       cancelled = true;
     };
-  }, [current?.videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey]); // eslint-disable-line react-hooks/exhaustive-deps
+  }, [current?.videoId]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const videoId = current?.videoId;

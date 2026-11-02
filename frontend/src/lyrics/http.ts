@@ -1,12 +1,15 @@
 /**
- * Shared fetch helpers for the client-side lyrics providers.
+ * Shared fetch helpers for the client-side lyrics providers. Lyrics
+ * are fetched entirely in the browser: there is no server fallback
+ * anywhere in this layer. Every provider runs direct-first, then
+ * through public CORS relays for origins that send no
+ * `Access-Control-Allow-Origin` header.
  *
  * Browser limits are honoured here: no `User-Agent` header is ever set
  * (it is a forbidden fetch header and would be silently ignored), and
  * no `Content-Type` is sent on GETs. Transport failures throw so the
- * chain can mark the provider failed and fall back to the Carmen
- * server endpoint for exactly that provider — one provider failing
- * must never break the chain.
+ * chain can mark the provider failed — one provider failing must
+ * never break the chain.
  *
  * WHY A CORS RELAY EXISTS (layer 2 of the fetch order)
  * ---------------------------------------------------
@@ -24,6 +27,14 @@
  * artist, album, duration, video id). It never carries secrets: see
  * `fetchTextWithRelay` — relay requests strip every header except
  * `Accept`, and Paxsenix never uses the relay at all.
+ *
+ * RELAY HEALTH (checked live 2026-11-02): AllOrigins answers real
+ * provider payloads. Codetabs is DEAD — its proxy was shut down in
+ * June 2026 and the repository archived — so it is no longer in the
+ * chain. cors.dev (`proxy.cors.dev`, GET/HEAD with no key) answered
+ * a live Lrclib search with real data and is the second relay.
+ * corsproxy.io now requires an API key and cors.lol rate-limited
+ * from this sandbox, so neither is used: no hardcoded keys anywhere.
  */
 
 export type FetchParams = Record<string, string | number | boolean | undefined | null>;
@@ -42,21 +53,21 @@ export interface FetchResult {
   /** Which layer produced this result (absent = direct-only helper). */
   via?: 'direct' | 'relay';
   /** Relay that produced a relay result, when `via` is `'relay'`. */
-  relay?: 'allorigins' | 'codetabs';
+  relay?: 'allorigins' | 'corsdev';
 }
 
 /**
- * Public CORS relays, tried in order, GET-only, no key. Each relay URL
- * is built from the FULL target URL (query string included),
- * percent-encoded exactly once with `encodeURIComponent`.
+ * Public CORS relays, tried in order, GET-only, no key. AllOrigins
+ * takes the FULL target URL (query string included) percent-encoded
+ * exactly once. cors.dev takes the target URL unencoded, appended
+ * after its prefix, query string left as-is.
  */
 export function relayUrlsFor(
   targetUrl: string,
-): { name: 'allorigins' | 'codetabs'; url: string }[] {
-  const encoded = encodeURIComponent(targetUrl);
+): { name: 'allorigins' | 'corsdev'; url: string }[] {
   return [
-    { name: 'allorigins', url: `https://api.allorigins.win/raw?url=${encoded}` },
-    { name: 'codetabs', url: `https://api.codetabs.com/v1/proxy?quest=${encoded}` },
+    { name: 'allorigins', url: `https://api.allorigins.win/raw?url=${encodeURIComponent(targetUrl)}` },
+    { name: 'corsdev', url: `https://proxy.cors.dev/${targetUrl}` },
   ];
 }
 
@@ -85,8 +96,10 @@ async function fetchOnce(
  * a direct failure is fast (a CORS rejection is immediate), so the
  * relay gets the remaining time, and direct + relay can never exceed
  * the budget the chain enforces. A relay failure (reject, timeout via
- * the shared signal, or non-2xx) is swallowed here and returns `null`
- * — it never throws, and never surfaces to the caller.
+ * the shared signal, non-2xx, or an empty body — an upstream error
+ * page the relay passed through as 200) is skipped and the next relay
+ * is tried; when every relay fails, `null` is returned. It never
+ * throws, and never surfaces to the caller.
  */
 async function tryRelays(
   targetUrl: string,
@@ -97,12 +110,11 @@ async function tryRelays(
     if (signal?.aborted) return null;
     try {
       const result = await fetchOnce(relay.url, relayHeaders(headers), signal);
-      if (result.status >= 200 && result.status <= 299) {
+      if (result.status >= 200 && result.status <= 299 && result.text.trim()) {
         return { ...result, via: 'relay', relay: relay.name };
       }
     } catch {
-      // Relay down / blocked / timed out: try the next relay, then
-      // fall through to the caller (chain → server fallback).
+      // Relay down / blocked / timed out: try the next relay.
     }
   }
   return null;
@@ -125,22 +137,22 @@ export async function fetchText(
 }
 
 /**
- * GET with the three-layer fetch order, all driven from the browser:
+ * GET with the two-layer fetch order, all driven from the browser:
  *
  * 1. Direct fetch to the provider origin.
- * 2. CORS relay (AllOrigins, then Codetabs) when the direct fetch
+ * 2. CORS relays (AllOrigins, then cors.dev) when the direct fetch
  *    fails to *read* a response — a transport/CORS rejection — or
- *    answers non-2xx, which a relay might bypass. Relay attempts
- *    share the caller's `AbortSignal` (the provider's 8s budget).
- * 3. Nothing here: the chain/picker's Carmen-server fallback (layer
- *    3) runs only for providers this helper reports as failed, i.e.
- *    when the direct fetch threw and every relay failed too. That
- *    failure is reported by rethrowing the direct error after the
- *    relays have been tried and swallowed — the chain catches it,
- *    marks the provider failed, and the picker falls back to the
- *    server for that id only. A provider that *answers* non-2xx
- *    (even after the relays) is not a transport failure: the direct
- *    result is returned and the provider treats it as "no lyrics".
+ *    answers non-2xx or with an empty body, which a relay might
+ *    bypass. Relay attempts share the caller's `AbortSignal` (the
+ *    provider's 8s budget). There is no third layer: when direct
+ *    and every relay fail, the error is rethrown so the chain marks
+ *    the provider failed and the picker can say so honestly.
+ *
+ * A provider that *answers* non-2xx (even after the relays) is not a
+ * transport failure: the direct result is returned and the provider
+ * treats it as "no lyrics". An empty 2xx body is different — it
+ * carries nothing to parse, so the relays are still tried before
+ * giving up on the transport.
  *
  * Throws on transport errors (after the relays). Relay requests
  * carry no secrets: headers are stripped to `Accept` only.
@@ -160,7 +172,7 @@ export async function fetchTextWithRelay(
     if (relayed) return relayed;
     throw error;
   }
-  if (direct.status >= 200 && direct.status <= 299) {
+  if (direct.status >= 200 && direct.status <= 299 && direct.text.trim()) {
     return { ...direct, via: 'direct' };
   }
   const relayed = await tryRelays(target, headers, signal);

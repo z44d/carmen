@@ -264,21 +264,15 @@ describe('Paxsenix providers', () => {
 });
 
 describe('YouTube providers', () => {
-  it('subtitle stays unavailable and returns nothing', async () => {
+  it('subtitle and music are ordinary browser providers, not unavailable/server-only', async () => {
     const registry = await getProviderRegistry();
-    const def = registry.find((d) => d.id === 'youtube-subtitle')!;
-    expect(def.alwaysUnavailable).toBe(true);
-    expect(await def.getLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toBeNull();
-    expect(await def.getAllLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toEqual([]);
-  });
-
-  it('music is server-only: never unavailable in the registry, never fetched in the browser', async () => {
-    const registry = await getProviderRegistry();
-    const def = registry.find((d) => d.id === 'youtube-music')!;
-    expect(def.alwaysUnavailable).toBe(false);
-    expect(def.serverOnly).toBe(true);
-    expect(await def.getLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toBeNull();
-    expect(await def.getAllLyrics({ videoId: 'x', title: '', artist: '', album: '', durationSeconds: null }, undefined)).toEqual([]);
+    const subtitle = registry.find((d) => d.id === 'youtube-subtitle')!;
+    const music = registry.find((d) => d.id === 'youtube-music')!;
+    expect(subtitle.alwaysUnavailable).toBe(false);
+    expect(music.alwaysUnavailable).toBe(false);
+    expect('serverOnly' in subtitle).toBe(false);
+    expect('serverOnly' in music).toBe(false);
+    expect(typeof subtitle.describeEmpty).toBe('function');
   });
 });
 
@@ -345,6 +339,10 @@ describe('CORS relay layer', () => {
     ).rejects.toThrow();
     expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(String(fetchMock.mock.calls[0][0])).not.toContain('allorigins');
-    expect(String(fetchMock.mock.calls[0][0])).not.toContain('codetabs');
+    expect(String(fetchMock.mock.calls[0][0])).not.toContain('cors.dev');
+    // The key travels only in the direct request's header, never in a URL.
+    for (const [url] of fetchMock.mock.calls) {
+      expect(String(url)).not.toContain('secret');
+    }
   });
 });

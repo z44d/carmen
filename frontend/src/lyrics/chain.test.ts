@@ -113,13 +113,13 @@ describe('client chain all-results', () => {
       title: 'Song',
       artist: 'Artist',
       durationSeconds: 100,
-      order: ['youtube-subtitle', 'youtube-music'],
+      order: ['paxsenix-apple-music'],
     });
-    expect(entries).toHaveLength(2);
+    expect(entries).toHaveLength(1);
     expect(entries.every((e) => e.available === false)).toBe(true);
   });
 
-  it('marks the server-only provider so the picker merges its server result', async () => {
+  it('runs the YouTube providers in the browser like any other provider', async () => {
     const entries = await fetchClientProviderResults({
       videoId: 'all-4',
       title: 'Song',
@@ -127,13 +127,37 @@ describe('client chain all-results', () => {
       durationSeconds: 100,
       order: ['youtube-music', 'youtube-subtitle'],
     });
-    const music = entries.find((e) => e.provider === 'youtube-music')!;
-    expect(music.available).toBe(false);
-    expect(music.serverOnly).toBe(true);
-    expect(music.synced).toBeNull();
-    expect(music.unsynced).toBeNull();
+    // No serverOnly flag remains: both run in the browser. In this
+    // fixture the watch page is unreachable, so both are empty —
+    // and the subtitle row carries the gated reason.
+    expect(entries).toHaveLength(2);
+    for (const entry of entries) {
+      expect(entry.available).toBe(true);
+      expect(entry.synced).toBeNull();
+      expect(entry.unsynced).toBeNull();
+      expect('serverOnly' in entry).toBe(false);
+    }
     const subtitle = entries.find((e) => e.provider === 'youtube-subtitle')!;
-    expect(subtitle.serverOnly).toBe(false);
+    expect(subtitle.emptyReason).toBe('gated');
+  });
+
+  it('never fetches a Carmen server URL from the lyrics path', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockClear();
+    await fetchClientProviderResults({
+      videoId: 'all-5',
+      title: 'Song',
+      artist: 'Artist',
+      durationSeconds: 100,
+      order: ['betterlyrics', 'lrclib', 'youtube-music', 'youtube-subtitle', 'kugou'],
+    });
+    expect(fetchMock.mock.calls.length).toBeGreaterThan(0);
+    for (const [url] of fetchMock.mock.calls) {
+      const href = String(url);
+      expect(href).not.toContain('browsing/');
+      expect(href).not.toContain('api-carmen');
+      expect(href).not.toContain('lyrics/providers');
+    }
   });
 
   it('does not throw when a provider fetch rejects', async () => {
