@@ -53,7 +53,7 @@ export function Spinner({ size = 40, color = 'primary', className }: SpinnerProp
       role="progressbar"
       className={cn(
         'inline-block animate-spin rounded-full border-current border-t-transparent',
-        color === 'primary' && 'text-accent',
+        color === 'primary' && 'text-accent-fg',
         className,
       )}
       style={{ width: size, height: size, borderWidth: Math.max(2, Math.round(size / 9)) }}
@@ -126,7 +126,7 @@ export function IconButton({
         'relative inline-grid place-items-center rounded-full transition-colors duration-150',
         'text-action hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent',
         'disabled:pointer-events-none disabled:text-disabled',
-        color === 'primary' && 'text-accent',
+        color === 'primary' && 'text-accent-fg',
         color === 'error' && 'text-error',
         size === 'small' ? 'p-[5px]' : 'p-2',
         edge === 'start' && '-ml-2',
@@ -176,7 +176,7 @@ export function Button({
             : 'bg-accent text-accent-contrast hover:brightness-90'
           : color === 'error'
             ? 'text-error hover:bg-hover'
-            : 'text-accent hover:bg-hover',
+            : 'text-accent-fg hover:bg-hover',
         fullWidth && 'w-full',
         className,
       )}
@@ -430,7 +430,7 @@ export function ListItemButton({
         'transition-colors duration-150 hover:bg-hover',
         'focus-visible:outline-2 focus-visible:outline-accent',
         'disabled:pointer-events-none disabled:opacity-50',
-        selected && 'bg-hover text-accent',
+        selected && 'bg-hover text-accent-fg',
         className,
       )}
     >
@@ -586,7 +586,7 @@ export function Tab({
         'text-sm font-medium transition-colors duration-150',
         'focus-visible:outline-2 focus-visible:outline-accent',
         'after:absolute after:inset-x-0 after:-bottom-px after:h-[2px] after:content-[""]',
-        selected ? 'text-accent after:bg-accent' : 'text-muted hover:text-body after:bg-transparent',
+        selected ? 'text-accent-fg after:bg-accent-fg' : 'text-muted hover:text-body after:bg-transparent',
         ctx?.variant === 'fullWidth' && 'flex-1 justify-center',
         className,
       )}

@@ -41,7 +41,10 @@ interface LyricsProviderPickerProps {
 
 type LoadState = 'loading' | 'error' | 'done';
 
-function syncBadge(result: ProviderLyricsResult & { emptyReason?: string | null }, hasPaxsenixKey: boolean): string {
+function syncBadge(
+  result: ProviderLyricsResult & { emptyReason?: string | null; directFailed?: boolean },
+  hasPaxsenixKey: boolean,
+): string {
   if (result.synced?.length) {
     return result.synced.some((line) => line.words?.length)
       ? 'Word synced'
@@ -56,6 +59,11 @@ function syncBadge(result: ProviderLyricsResult & { emptyReason?: string | null 
     }
     return 'Unavailable';
   }
+  // Transport / upstream failure (direct fetch AND every relay
+  // failed, or the upstream gated the query) is NOT "no lyrics
+  // found": the provider never got to answer. Only a provider that
+  // answered with nothing gets the empty label.
+  if (result.directFailed) return "Couldn't reach provider — try again";
   if (result.provider === 'youtube-subtitle' && result.emptyReason === 'no-captions') {
     return 'No captions for this video';
   }

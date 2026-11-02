@@ -384,7 +384,7 @@ export default function SettingsPage() {
                 size="small"
                 label={`Currently ${resolved}`}
                 variant="outlined"
-                className="!border-accent/50 !text-accent"
+                className="!border-accent/50 !text-accent-fg"
               />
             }
             hint={
@@ -421,7 +421,7 @@ export default function SettingsPage() {
                 size="small"
                 label={selectedFont.name}
                 variant="outlined"
-                className="!border-accent/50 !text-accent"
+                className="!border-accent/50 !text-accent-fg"
               />
             }
             hint="Cairo and Alexandria download once, when you pick them."

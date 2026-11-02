@@ -5,9 +5,9 @@
  *
  * Providers whose hosts send no CORS headers for this origin cannot
  * be read cross-origin (BetterLyrics/Portato, KuGou, Megalobiz,
- * SimpMusic); a public CORS relay (AllOrigins, then cors.dev — see
- * `http.ts`) is tried for those origins before the provider is
- * reported empty. Paxsenix never goes through a relay.
+ * SimpMusic); a public CORS relay (cors.dev first, then AllOrigins
+ * — see `http.ts`) is tried for those origins before the provider
+ * is reported empty. Paxsenix never goes through a relay.
  *
  * YouTube Music and YouTube Subtitle run in the browser too (see
  * `youtube.ts`): the watch page (GET, via the relay layer) plus
@@ -30,6 +30,7 @@ import {
   fetchText,
   fetchTextWithRelay,
   parseJsonLenient,
+  throwIfUpstreamFailure,
   type FetchParams,
 } from './http';
 import { isLineSyncedLrc } from './parse';
@@ -203,9 +204,13 @@ async function fetchBetterLyricsEndpoint(
   const params: FetchParams = { s: title, a: artist };
   if (album) params.al = album;
   if (durationSeconds != null && durationSeconds > 0) params.d = durationSeconds;
-  const { status, text } = await fetchTextWithRelay(BETTERLYRICS_BASE + endpoint, params, undefined, signal);
-  if (status < 200 || status > 299) return null;
-  const decoded = decodeLyrics(text);
+  const result = await fetchTextWithRelay(BETTERLYRICS_BASE + endpoint, params, undefined, signal);
+  // 401/403/429/5xx is an upstream failure (e.g. BetterLyrics now
+  // gates uncached queries behind an API key), not "no lyrics":
+  // throw so the chain marks the provider failed.
+  throwIfUpstreamFailure(result);
+  if (result.status < 200 || result.status > 299) return null;
+  const decoded = decodeLyrics(result.text);
   if (!decoded) return null;
   return decoded.content.trim() ? decoded.content : null;
 }
@@ -244,12 +249,16 @@ async function singleAsAll(fetch: ProviderFetch): Promise<ProviderFetchAll> {
 
 // ── YouLyPlus ──────────────────────────────────────────────────────────────
 
+// Mirrors verified live 2026-11-02: binimum answers v2 with real
+// data direct and via relay; prjktla.my.id answers v2 via relay.
+// The v1 TTML endpoint 404s on binimum now, so v2 is tried FIRST
+// across mirrors and v1 only as a fallback — sweeping v1 across
+// five mirrors first burned the whole provider budget before v2
+// was ever reached. The other three mirrors are dead (workers.dev
+// 1042, atomix.one invalid TLS, vercel 402 deployment disabled).
 const YOULYPLUS_BASES = [
   'https://lyricsplus.binimum.org/',
   'https://lyricsplus.prjktla.my.id/',
-  'https://lyricsplus.prjktla.workers.dev/',
-  'https://lyricsplus.atomix.one/',
-  'https://lyricsplus-seven.vercel.app/',
 ];
 
 function formatLrcTimestamp(timeMs: number, bracketed: boolean): string {
@@ -312,9 +321,10 @@ async function fetchYouLyPlusFromMirrors(
   let lastError: unknown = null;
   for (const baseUrl of YOULYPLUS_BASES) {
     try {
-      const { status, text } = await fetchTextWithRelay(baseUrl + path, params, { Accept: 'application/json' }, signal);
-      if (status < 200 || status > 299) continue;
-      const lyrics = decode(text);
+      const result = await fetchTextWithRelay(baseUrl + path, params, { Accept: 'application/json' }, signal);
+      throwIfUpstreamFailure(result);
+      if (result.status < 200 || result.status > 299) continue;
+      const lyrics = decode(result.text);
       if (lyrics && lyrics.trim()) return lyrics;
     } catch (error) {
       lastError = error;
@@ -327,10 +337,32 @@ async function fetchYouLyPlusFromMirrors(
 const youLyPlusGet: ProviderFetch = async (ctx, signal) => {
   const { title, artist, album, durationSeconds } = cleanCtx(ctx);
   if (!title || !artist) return null;
-  let ttmlError: unknown = null;
-  let ttml: string | null = null;
+  // v2 FIRST: the v1 TTML endpoint 404s on the live mirrors, and
+  // sweeping it across mirrors burned the budget before v2 ran.
+  let v2Error: unknown = null;
   try {
-    ttml = await fetchYouLyPlusFromMirrors(
+    const v2 = await fetchYouLyPlusFromMirrors(
+      'v2/lyrics/get',
+      title,
+      artist,
+      album,
+      durationSeconds,
+      (body) => {
+        const parsed = parseJsonLenient(body);
+        if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
+        return youLyPlusToText(parsed as Record<string, unknown>);
+      },
+      signal,
+    );
+    if (v2) return v2;
+  } catch (error) {
+    // Fall through to v1: a v2 transport failure must not hide a
+    // working v1 mirror. If v1 also yields nothing, the v2 failure
+    // is rethrown below so the chain marks the provider failed
+    // instead of empty.
+    v2Error = error;
+  }
+  const v1 = await fetchYouLyPlusFromMirrors(
     'v1/ttml/get',
     title,
     artist,
@@ -350,29 +382,9 @@ const youLyPlusGet: ProviderFetch = async (ctx, signal) => {
       return candidate && candidate.startsWith('<') ? candidate : null;
     },
     signal,
-    );
-  } catch (error) {
-    ttmlError = error;
-  }
-  if (ttml) return ttml;
-  try {
-    return await fetchYouLyPlusFromMirrors(
-    'v2/lyrics/get',
-    title,
-    artist,
-    album,
-    durationSeconds,
-    (body) => {
-      const parsed = parseJsonLenient(body);
-      if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) return null;
-      return youLyPlusToText(parsed as Record<string, unknown>);
-    },
-    signal,
-    );
-  } catch (error) {
-    if (ttmlError) throw ttmlError;
-    throw error;
-  }
+  );
+  if (!v1 && v2Error) throw v2Error;
+  return v1;
 };
 
 // ── LrcLib ─────────────────────────────────────────────────────────────────
@@ -623,8 +635,7 @@ function kugouCandidates(payload: Record<string, unknown>): Record<string, unkno
 
 async function kugouDownload(candidate: Record<string, unknown>, signal?: AbortSignal): Promise<string | null> {
   // The download fetch itself propagates transport failures (direct +
-  // relay exhausted) so the chain marks KuGou failed and the picker
-  // can fall back to the server for it; only decode errors return null.
+  // relay exhausted) so the chain marks KuGou failed; only decode errors return null.
   const payload = await fetchJsonWithRelay(
       'https://lyrics.kugou.com/download',
       {
@@ -747,6 +758,7 @@ const megalobizGet: ProviderFetch = async (ctx, signal) => {
   const params: FetchParams = { title, artist };
   if (durationSeconds != null && durationSeconds > 0) params.duration = durationSeconds;
   const search = await fetchTextWithRelay(`${MEGALOBIZ_API}/search`, params, undefined, signal);
+  throwIfUpstreamFailure(search);
   if (search.status < 200 || search.status > 299) return null;
   const payload = parseJsonLenient(search.text);
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return null;
@@ -756,6 +768,7 @@ const megalobizGet: ProviderFetch = async (ctx, signal) => {
   const id = first?.id;
   if (id == null) return null;
   const detail = await fetchTextWithRelay(`${MEGALOBIZ_API}/lrc/${id}`, { format: 'lrc' }, undefined, signal);
+  throwIfUpstreamFailure(detail);
   if (detail.status < 200 || detail.status > 299) return null;
   const cleaned = detail.text.trim();
   return isLineSyncedLrc(cleaned) ? cleaned : null;
@@ -773,14 +786,17 @@ interface SimpMusicTrack {
 
 async function simpMusicTracks(videoId: string, signal?: AbortSignal): Promise<SimpMusicTrack[]> {
   if (!videoId) return [];
-  const { status, text } = await fetchTextWithRelay(
+  const result = await fetchTextWithRelay(
     SIMPMUSIC_BASE + videoId,
     undefined,
     { Accept: 'application/json' },
     signal,
   );
-  if (status !== 200) return [];
-  const payload = parseJsonLenient(text);
+  // SimpMusic now answers 403 "only available to SimpMusic clients"
+  // on every transport: an upstream gate, not "no lyrics".
+  throwIfUpstreamFailure(result);
+  if (result.status !== 200) return [];
+  const payload = parseJsonLenient(result.text);
   if (typeof payload !== 'object' || payload === null || Array.isArray(payload)) return [];
   if ((payload as Record<string, unknown>).type !== 'success') return [];
   const data = (payload as Record<string, unknown>).data;
@@ -853,9 +869,10 @@ async function unisonGetJson(
   params: FetchParams | undefined,
   signal?: AbortSignal,
 ): Promise<Record<string, unknown> | null> {
-  const { status, text } = await fetchTextWithRelay(UNISON_BASE + path, params, undefined, signal);
-  if (status < 200 || status > 299) return null;
-  const payload = parseJsonLenient(text);
+  const result = await fetchTextWithRelay(UNISON_BASE + path, params, undefined, signal);
+  throwIfUpstreamFailure(result);
+  if (result.status < 200 || result.status > 299) return null;
+  const payload = parseJsonLenient(result.text);
   return typeof payload === 'object' && payload !== null && !Array.isArray(payload)
     ? (payload as Record<string, unknown>)
     : null;

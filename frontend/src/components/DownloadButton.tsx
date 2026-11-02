@@ -80,7 +80,7 @@ export default function DownloadButton({
               width={ringSize}
               height={ringSize}
               viewBox="22 22 44 44"
-              className="block text-accent"
+              className="block text-accent-fg"
               style={{ transform: 'rotate(-90deg)' }}
             >
               <circle

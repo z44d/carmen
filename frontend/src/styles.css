@@ -188,8 +188,29 @@
     -webkit-backdrop-filter: blur(16px) saturate(1.4);
     color: #ffffff;
   }
-  .glass-pill::placeholder {
+  .glass-pill::placeholder,
+  .glass-pill input::placeholder {
     color: rgba(255, 255, 255, 0.6);
+  }
+
+  /*
+   * Light theme glass: the dark translucent pill that floats over
+   * the hero in dark mode reads muddy and heavy over warm paper, so
+   * in light mode the same pill becomes light glass — warm-white,
+   * soft border, dark text — readable over artwork and over paper
+   * alike. Dark mode keeps the dark pill untouched.
+   */
+  [data-theme="light"] .glass-pill {
+    background-color: rgba(255, 253, 248, 0.82);
+    border-color: rgba(60, 45, 25, 0.16);
+    color: #1b1712;
+  }
+  [data-theme="light"] .glass-pill::placeholder,
+  [data-theme="light"] .glass-pill input::placeholder {
+    color: rgba(27, 23, 18, 0.68);
+  }
+  [data-theme="light"] .glass-pill:focus-within {
+    border-color: rgba(60, 45, 25, 0.4);
   }
 
   /* Horizontal peek row: snap + momentum scrolling, scrollbar hidden by
@@ -274,4 +295,23 @@
       animation: none;
     }
   }
+}
+
+/*
+ * Light-theme-only overrides, unlayered so they win over the
+ * `@theme` defaults for the same custom properties. Dark mode is
+ * untouched: the heavy dark `--shadow-glass` stays exactly as it
+ * was, and `color-scheme` follows the resolved mode so native
+ * controls (scrollbars, date pickers, autofill) match.
+ */
+[data-theme="light"] {
+  color-scheme: light;
+  /* Soft warm shadow: floating chrome (mini player, dialogs,
+     bottom nav, header pills) lifts gently off warm paper instead
+     of casting the dark-mode drop shadow. */
+  --shadow-glass: 0 10px 30px rgba(93, 72, 48, 0.14), 0 2px 8px rgba(93, 72, 48, 0.08);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }

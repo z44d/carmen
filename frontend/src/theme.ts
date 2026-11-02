@@ -73,10 +73,14 @@ export const DEFAULT_FONT: FontId = 'alexandria';
  *
  * Dark look: the dark palette is near-black and flat (`#050505` ground,
  * `#0d0d0f` surfaces, hairline white dividers) with white text and grey
- * secondary text; the light palette is the same layout in readable light
- * tones. The accent picker (and Adaptive accent, when on) drives active
- * states and focus through the `--app-accent` token; the default accent
- * is Neutral, so chrome stays monochrome until the user picks a hue.
+ * secondary text. The light palette is warm paper, not grey: a warm
+ * ivory ground (`#faf7f1`), warm-white surfaces, warm near-black text,
+ * and a stronger secondary/divider so hierarchy survives daylight —
+ * the old near-white-on-white with 0.62-alpha secondaries and faint
+ * dividers read washed out. The accent picker (and Adaptive accent,
+ * when on) drives active states and focus through the `--app-accent`
+ * token; the default accent is Neutral, so chrome stays monochrome
+ * until the user picks a hue.
  */
 const PALETTE = {
   dark: {
@@ -87,11 +91,11 @@ const PALETTE = {
     divider: 'rgba(255,255,255,0.10)',
   },
   light: {
-    bg: '#fbfbfb',
-    paper: '#ffffff',
-    text: '#111111',
-    textSecondary: 'rgba(17,17,17,0.62)',
-    divider: 'rgba(0,0,0,0.09)',
+    bg: '#faf7f1',
+    paper: '#fffdf8',
+    text: '#1b1712',
+    textSecondary: 'rgba(27,23,18,0.68)',
+    divider: 'rgba(60,45,25,0.14)',
   },
 } as const;
 
@@ -116,11 +120,11 @@ export function cssPalette(mode: 'light' | 'dark'): Record<string, string> {
     // MUI default theme values the Tailwind tokens mirror: disabled text is
     // identical to action.disabled, action.active and hover come from the
     // stock light/dark palettes.
-    '--app-text-disabled': mode === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.26)',
-    '--app-action-active': mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(0,0,0,0.54)',
+    '--app-text-disabled': mode === 'dark' ? 'rgba(255,255,255,0.3)' : 'rgba(27,23,18,0.38)',
+    '--app-action-active': mode === 'dark' ? 'rgba(255,255,255,0.7)' : 'rgba(27,23,18,0.62)',
     // Success wears the body text colour — a check/icon, not a hue.
     '--app-success': colors.text,
-    '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.04)',
+    '--app-hover': mode === 'dark' ? 'rgba(255,255,255,0.05)' : 'rgba(60,45,25,0.06)',
     // MUI error.main — the one severity colour `buildTheme` never overrode.
     '--app-error': mode === 'dark' ? '#f44336' : '#d32f2f',
   };

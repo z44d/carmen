@@ -2,7 +2,12 @@
  * Client-side provider chain — a TypeScript port of
  * `server/lyrics/chain.py` (Android `LyricsHelper` semantics).
  *
- * Providers run concurrently (max 6, 8s per provider, 12s overall).
+ * Providers ALL start at once (no worker pool: the old 6-worker
+ * pool plus an 8s per-provider budget and a 12s overall budget
+ * starved providers 7–13 on slow networks — with relay attempts
+ * taking seconds each, the second wave never ran before the
+ * deadline). Budgets are now 16s per provider / 20s overall, so a
+ * slow relay attempt cannot starve the other providers.
  * The single-result path ranks by quality — word-synced (2) >
  * line-synced/TTML (1) > plain (0), preferring the lower registry
  * order on ties — with the same grace periods: after the first
@@ -30,9 +35,9 @@ import {
   type ProviderDefinition,
 } from './providers';
 
-export const MAX_CONCURRENT_PROVIDERS = 6;
-export const FETCH_TIMEOUT_MS = 12000;
-export const PROVIDER_TIMEOUT_MS = 8000;
+export const MAX_CONCURRENT_PROVIDERS = 13;
+export const FETCH_TIMEOUT_MS = 20000;
+export const PROVIDER_TIMEOUT_MS = 16000;
 export const QUALITY_GRACE_MS = 1500;
 export const PROVIDER_PRIORITY_GRACE_MS = 350;
 export const WORD_SYNCED_QUALITY = 2;
@@ -156,9 +161,10 @@ interface CollectOutcome {
 }
 
 /**
- * Run provider jobs with a 6-worker pool, an 8s per-provider budget
- * and a 12s overall budget, polling like the Python collector so the
- * grace-period rules can shorten the deadline as candidates arrive.
+ * Run provider jobs all at once, with a 16s per-provider budget
+ * and a 20s overall budget, polling like the Python collector so
+ * the grace-period rules can shorten the deadline as candidates
+ * arrive.
  */
 async function collectWithBudget(
   jobs: { providerId: string; run: (signal: AbortSignal) => Promise<ParsedLyrics[]> }[],

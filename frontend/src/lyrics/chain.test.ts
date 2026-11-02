@@ -74,9 +74,9 @@ describe('client chain ranking', () => {
       durationSeconds: 100,
       order: ['lrclib', 'youlyplus'],
     });
-    // Both are line/word results in this fixture; LrcLib is quality 1,
-    // YouLyPlus's v1 TTML fails (no TTML on the mirror) and its v2
-    // line result is quality 1 — the earlier provider wins the tie.
+    // Both are line results in this fixture; LrcLib is quality 1,
+    // YouLyPlus's v2 line result is quality 1 — the earlier
+    // provider wins the tie.
     expect(best?.provider).toBe('lrclib');
   });
 
@@ -173,5 +173,52 @@ describe('client chain all-results', () => {
       order: ['lrclib'],
     });
     expect(Array.isArray(entries)).toBe(true);
+  });
+
+  it('marks a provider that answers 403 as failed, not empty', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    fetchMock.mockImplementation(async (input: string) => {
+      if (String(input).includes('simpmusic.org')) {
+        return textResponse(
+          JSON.stringify({ success: false, error: { code: 403, reason: 'This API is only available to SimpMusic clients' } }),
+          403,
+        );
+      }
+      return textResponse('', 404);
+    });
+    const entries = await fetchClientProviderResults({
+      videoId: 'all-7',
+      title: 'Song',
+      artist: 'Artist',
+      durationSeconds: 100,
+      order: ['simpmusic'],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].directFailed).toBe(true);
+    expect(entries[0].synced).toBeNull();
+    expect(entries[0].unsynced).toBeNull();
+  });
+
+  it('starts all providers at once instead of pooling: a slow provider cannot starve later ones', async () => {
+    const fetchMock = fetch as unknown as ReturnType<typeof vi.fn>;
+    let release!: (value: Response) => void;
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve;
+    });
+    fetchMock.mockImplementation(() => gate);
+    const pending = fetchClientProviderResults({
+      videoId: 'all-6',
+      title: 'Song',
+      artist: 'Artist',
+      durationSeconds: 100,
+    });
+    await new Promise((resolve) => setTimeout(resolve, 50));
+    const urls = fetchMock.mock.calls.map(([url]) => String(url));
+    expect(urls.some((url) => url.includes('lrclib.net'))).toBe(true);
+    expect(urls.some((url) => url.includes('megalobiz.com'))).toBe(true);
+    expect(urls.some((url) => url.includes('unison.boidu.dev'))).toBe(true);
+    release(textResponse('', 404));
+    const entries = await pending;
+    expect(entries.length).toBeGreaterThan(0);
   });
 });

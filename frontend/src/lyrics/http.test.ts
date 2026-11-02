@@ -28,14 +28,14 @@ afterEach(() => {
 });
 
 describe('relayUrlsFor', () => {
-  it('builds AllOrigins then cors.dev from the full target URL', () => {
+  it('builds cors.dev first, then AllOrigins, from the full target URL', () => {
     const target = 'https://lyrics-api.boidu.dev/getLyrics?s=Adele&artist=X%20Y';
     const urls = relayUrlsFor(target);
-    expect(urls.map((entry) => entry.name)).toEqual(['allorigins', 'corsdev']);
-    expect(urls[0].url).toBe(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
-    expect(urls[1].url).toBe(`https://proxy.cors.dev/${target}`);
+    expect(urls.map((entry) => entry.name)).toEqual(['corsdev', 'allorigins']);
+    expect(urls[0].url).toBe(`https://proxy.cors.dev/${target}`);
+    expect(urls[1].url).toBe(`https://api.allorigins.win/raw?url=${encodeURIComponent(target)}`);
     // The AllOrigins query param decodes back to the exact target, query included.
-    expect(new URL(urls[0].url).searchParams.get('url')).toBe(target);
+    expect(new URL(urls[1].url).searchParams.get('url')).toBe(target);
   });
 });
 
@@ -47,28 +47,27 @@ describe('fetchTextWithRelay', () => {
     expect(fetchMock).toHaveBeenCalledTimes(1);
   });
 
-  it('falls back to AllOrigins when the direct fetch throws (CORS)', async () => {
+  it('falls back to cors.dev first when the direct fetch throws (CORS)', async () => {
     fetchMock
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
       .mockResolvedValueOnce(textResponse('[00:01.00]Hi'));
     const result = await fetchTextWithRelay('https://lyrics-api.boidu.dev/getLyrics', { s: 'Song' });
     expect(result.via).toBe('relay');
-    expect(result.relay).toBe('allorigins');
+    expect(result.relay).toBe('corsdev');
     expect(result.text).toBe('[00:01.00]Hi');
     const relayUrl = String(fetchMock.mock.calls[1][0]);
-    expect(relayUrl).toContain('api.allorigins.win/raw?url=');
-    expect(new URL(relayUrl).searchParams.get('url')).toContain('/getLyrics?s=Song');
+    expect(relayUrl).toContain('proxy.cors.dev/https://lyrics-api.boidu.dev/getLyrics?s=Song');
   });
 
-  it('tries cors.dev when AllOrigins fails', async () => {
+  it('tries AllOrigins only when cors.dev fails', async () => {
     fetchMock
       .mockRejectedValueOnce(new TypeError('Failed to fetch'))
       .mockRejectedValueOnce(new Error('relay down'))
-      .mockResolvedValueOnce(textResponse('via cors.dev'));
+      .mockResolvedValueOnce(textResponse('via allorigins'));
     const result = await fetchTextWithRelay('https://example.test/x');
     expect(result.via).toBe('relay');
-    expect(result.relay).toBe('corsdev');
-    expect(String(fetchMock.mock.calls[2][0])).toContain('proxy.cors.dev/https://example.test/x');
+    expect(result.relay).toBe('allorigins');
+    expect(String(fetchMock.mock.calls[2][0])).toContain('api.allorigins.win/raw?url=');
   });
 
   it('tries the relays when the direct fetch answers 2xx with an empty body', async () => {
@@ -87,9 +86,37 @@ describe('fetchTextWithRelay', () => {
       .mockResolvedValueOnce(textResponse('real'));
     const result = await fetchTextWithRelay('https://example.test/x');
     expect(result.via).toBe('relay');
-    expect(result.relay).toBe('corsdev');
+    expect(result.relay).toBe('allorigins');
     expect(result.text).toBe('real');
     expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('retries a relay once after a 429 before moving on', async () => {
+    fetchMock
+      .mockRejectedValueOnce(new TypeError('Failed to fetch'))
+      .mockResolvedValueOnce(textResponse('rate limited', 429))
+      .mockResolvedValueOnce(textResponse('after retry'));
+    const result = await fetchTextWithRelay('https://example.test/x');
+    expect(result.via).toBe('relay');
+    expect(result.relay).toBe('corsdev');
+    expect(result.text).toBe('after retry');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('does not let a hanging direct fetch starve the relay: per-attempt timeout', async () => {
+    vi.useFakeTimers();
+    try {
+      fetchMock
+        .mockImplementationOnce(() => new Promise(() => {}))
+        .mockResolvedValueOnce(textResponse('via relay'));
+      const pending = fetchTextWithRelay('https://example.test/x');
+      await vi.advanceTimersByTimeAsync(4100);
+      const result = await pending;
+      expect(result.via).toBe('relay');
+      expect(result.text).toBe('via relay');
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it('rethrows the direct error when direct and both relays fail', async () => {
@@ -111,6 +138,7 @@ describe('fetchTextWithRelay', () => {
   it('returns the direct non-2xx result when the relays also fail to bypass it', async () => {
     fetchMock
       .mockResolvedValueOnce(textResponse('not found', 404))
+      .mockResolvedValueOnce(textResponse('relay error', 502))
       .mockResolvedValueOnce(textResponse('relay error', 502));
     const result = await fetchTextWithRelay('https://example.test/x');
     expect(result).toEqual({ status: 404, text: 'not found', via: 'direct' });
@@ -141,6 +169,15 @@ describe('fetchJsonWithRelay', () => {
 
   it('returns null on a relayed non-2xx / bad JSON', async () => {
     fetchMock.mockResolvedValueOnce(textResponse('not json', 200));
+    await expect(fetchJsonWithRelay('https://example.test/x')).resolves.toBeNull();
+  });
+
+  it('throws on upstream failure statuses (401/403/429/5xx) instead of reporting empty', async () => {
+    for (const status of [401, 403, 429, 503]) {
+      fetchMock.mockResolvedValueOnce(textResponse('gated', status));
+      await expect(fetchJsonWithRelay('https://example.test/x')).rejects.toThrow(`HTTP ${status}`);
+    }
+    fetchMock.mockResolvedValueOnce(textResponse('nope', 404));
     await expect(fetchJsonWithRelay('https://example.test/x')).resolves.toBeNull();
   });
 });

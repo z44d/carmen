@@ -215,7 +215,7 @@ export default function FavoritesSection() {
                 active
                   ? '!bg-accent !text-accent-contrast'
                   : option.id === 'online'
-                    ? '!border-accent/50 !text-accent'
+                    ? '!border-accent/50 !text-accent-fg'
                     : '',
               )}
               role="button"

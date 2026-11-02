@@ -97,23 +97,29 @@ function fetchWatchPage(videoId: string, signal?: AbortSignal): Promise<string |
   const cached = watchPageCache.get(videoId);
   if (cached) return cached;
   const promise = (async () => {
-    try {
-      const { status, text } = await fetchTextWithRelay(
-        'https://www.youtube.com/watch',
-        { v: videoId },
-        undefined,
-        signal,
-      );
-      if (status < 200 || status > 299 || !text.trim()) return null;
-      return text;
-    } catch {
-      return null;
-    }
+    const { status, text } = await fetchTextWithRelay(
+      'https://www.youtube.com/watch',
+      { v: videoId },
+      undefined,
+      signal,
+    );
+    // Transport failures THROW out of here (fetchTextWithRelay
+    // rethrows when direct + relays all fail) so the chain marks
+    // the YouTube providers failed instead of "gated": a 429 from
+    // a shared relay IP is not a gated video. Only an answered
+    // non-2xx / empty body returns null.
+    if (status < 200 || status > 299 || !text.trim()) return null;
+    return text;
   })();
   watchPageCache.set(videoId, promise);
-  void promise.then((html) => {
-    if (!html) watchPageCache.delete(videoId);
-  });
+  void promise.then(
+    (html) => {
+      if (!html) watchPageCache.delete(videoId);
+    },
+    () => {
+      watchPageCache.delete(videoId);
+    },
+  );
   return promise;
 }
 
@@ -411,7 +417,15 @@ export async function getYoutubeSubtitleLyrics(
 ): Promise<string | null> {
   const { videoId } = cleanQuery(query);
   if (!videoId) return null;
-  const html = await fetchWatchPage(videoId, signal);
+  let html: string | null;
+  try {
+    html = await fetchWatchPage(videoId, signal);
+  } catch {
+    // Watch-page transport failure (relays exhausted / rate-limited):
+    // rethrow so the chain marks Subtitle failed — "Couldn't reach
+    // provider" — rather than labelling it gated.
+    throw new Error('YouTube watch page unreachable');
+  }
   if (!html) {
     subtitleStatusByVideo.set(videoId, 'gated');
     return null;
@@ -533,7 +547,16 @@ export async function getYoutubeMusicLyrics(
 ): Promise<string | null> {
   const { videoId } = cleanQuery(query);
   if (!videoId) return null;
-  const html = await fetchWatchPage(videoId, signal);
+  let html: string | null = null;
+  let watchPageFailed = false;
+  try {
+    html = await fetchWatchPage(videoId, signal);
+  } catch {
+    // Watch-page transport failure: fall through to the `next`
+    // POST below, which is an independent resolution path.
+    html = null;
+    watchPageFailed = true;
+  }
   let browseIds: string[] = [];
   if (html) {
     rememberVisitorData(html);
@@ -556,6 +579,9 @@ export async function getYoutubeMusicLyrics(
       );
       if (next) browseIds = findLyricsBrowseIds(next);
     } catch {
+      // Both the watch page and the `next` POST failed: the
+      // provider is unreachable, not empty.
+      if (watchPageFailed) throw new Error('YouTube Music unreachable');
       return null;
     }
   }

@@ -57,7 +57,7 @@ export default function QueuePage() {
               size="small"
               label={player.isPlaying ? 'Playing' : 'Paused'}
               variant="outlined"
-              className="mt-[6px] !h-5 !border-accent/50 !text-accent"
+              className="mt-[6px] !h-5 !border-accent/50 !text-accent-fg"
             />
           </div>
         </div>

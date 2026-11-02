@@ -290,8 +290,7 @@ describe('CORS relay layer', () => {
     expect(result).toBe(ttml);
     expect(fetchMock).toHaveBeenCalledTimes(2);
     const relayUrl = String(fetchMock.mock.calls[1][0]);
-    expect(relayUrl).toContain('api.allorigins.win/raw?url=');
-    expect(new URL(relayUrl).searchParams.get('url')).toContain('lyrics-api.boidu.dev/getLyrics');
+    expect(relayUrl).toContain('proxy.cors.dev/https://lyrics-api.boidu.dev/getLyrics');
     // No secret header travels through the relay.
     const relayInit = fetchMock.mock.calls[1][1] as RequestInit | undefined;
     expect(relayInit?.headers).toBeUndefined();
@@ -315,12 +314,12 @@ describe('CORS relay layer', () => {
     expect(result).toBe(lrc);
     expect(fetchMock).toHaveBeenCalledTimes(6);
     // Calls alternate direct (even indices) / relay (odd indices):
-    // each step's direct fetch throws, then the AllOrigins relay
+    // each step's direct fetch throws, then the cors.dev relay
     // answers. Assert the relay calls, not every call after the first.
     const relayCalls = fetchMock.mock.calls.filter((_, index) => index % 2 === 1);
     expect(relayCalls).toHaveLength(3);
     for (const call of relayCalls) {
-      expect(String(call[0])).toContain('api.allorigins.win');
+      expect(String(call[0])).toContain('proxy.cors.dev/');
     }
     const directCalls = fetchMock.mock.calls.filter((_, index) => index % 2 === 0);
     for (const call of directCalls) {
@@ -344,5 +343,83 @@ describe('CORS relay layer', () => {
     for (const [url] of fetchMock.mock.calls) {
       expect(String(url)).not.toContain('secret');
     }
+  });
+});
+
+describe('upstream gating (live 2026-11-02: uncached queries need a key)', () => {
+  it('BetterLyrics rejects on the 401 key-gate instead of reporting empty', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        textResponse(
+          JSON.stringify({ error: 'API key required', message: 'Uncached queries require a valid API key via X-API-Key header' }),
+          401,
+        ),
+      ),
+    );
+    const def = await provider('betterlyrics');
+    await expect(
+      def.getLyrics(
+        { videoId: 'x', title: 'Shape of You', artist: 'Ed Sheeran', album: 'Divide', durationSeconds: 264 },
+        undefined,
+      ),
+    ).rejects.toThrow('HTTP 401');
+  });
+
+  it('SimpMusic rejects on the 403 client gate instead of reporting empty', async () => {
+    fetchMock.mockImplementation(() =>
+      Promise.resolve(
+        textResponse(
+          JSON.stringify({ success: false, error: { code: 403, reason: 'This API is only available to SimpMusic clients' } }),
+          403,
+        ),
+      ),
+    );
+    const def = await provider('simpmusic');
+    await expect(
+      def.getLyrics(
+        { videoId: 'uJdu4Lfy8aI', title: 'Set Fire to the Rain', artist: 'Adele', album: '21', durationSeconds: 243 },
+        undefined,
+      ),
+    ).rejects.toThrow('HTTP 403');
+  });
+});
+
+describe('YouLyPlus v2-first', () => {
+  it('tries v2 on the first mirror before any v1 call', async () => {
+    fetchMock.mockResolvedValue(
+      jsonResponse({ type: 'Word', lyrics: [{ time: 1000, text: 'Hello', syllabus: [{ time: 1000, text: 'Hel' }, { time: 1500, text: 'lo' }] }] }),
+    );
+    const def = await provider('youlyplus');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Set Fire to the Rain', artist: 'Adele', album: '21', durationSeconds: 243 },
+      undefined,
+    );
+    expect(result).toContain('[00:01.000]');
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    expect(firstUrl).toContain('lyricsplus.binimum.org/v2/lyrics/get');
+  });
+
+  it('falls back to v1 when v2 404s on every mirror', async () => {
+    const ttml = '<tt><body><p begin="1s">Hi</p></body></tt>';
+    fetchMock.mockImplementation(async (input: string) => {
+      let url = String(input);
+      try {
+        url = decodeURIComponent(url);
+      } catch {
+        // Keep the raw URL when it is not fully decodable.
+      }
+      if (url.includes('/v2/lyrics/get')) return textResponse('404 Not Found', 404);
+      return textResponse(ttml);
+    });
+    const def = await provider('youlyplus');
+    const result = await def.getLyrics(
+      { videoId: 'x', title: 'Song', artist: 'Artist', album: '', durationSeconds: 100 },
+      undefined,
+    );
+    expect(result).toBe(ttml);
+    const firstUrl = String(fetchMock.mock.calls[0][0]);
+    expect(firstUrl).toContain('/v2/lyrics/get');
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/v1/ttml/get'))).toBe(true);
   });
 });

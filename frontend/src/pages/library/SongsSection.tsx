@@ -160,7 +160,7 @@ export default function SongsSection() {
           }
           className={cn(
             'cursor-pointer focus-visible:outline-2 focus-visible:outline-accent',
-            favoritesOnly ? '!bg-accent !text-accent-contrast' : '!border-accent/50 !text-accent',
+            favoritesOnly ? '!bg-accent !text-accent-contrast' : '!border-accent/50 !text-accent-fg',
           )}
           role="button"
           tabIndex={0}
