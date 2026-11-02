@@ -1,6 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import { fetchTrackMeta } from '../api';
+import { fetchClientBestLyrics, fetchClientProviderLyrics } from '../lyrics/chain';
+import { inferLyricsQuality } from '../lyrics/parse';
 import { usePlayer } from '../player/PlayerContext';
 import { useSettings } from '../settings/store';
 import type { LyricLine, TrackLyrics } from '../types/models';
@@ -100,49 +102,137 @@ export default function LyricsView({
   const [pinnedProvider, setPinnedProvider] = useState<string | null>(null);
   const [pinnedLyrics, setPinnedLyrics] = useState<TrackLyrics | null>(null);
   const [pinnedLoading, setPinnedLoading] = useState(false);
+  /** Best client-chain lyrics for this song, fetched in the background. */
+  const [clientLyrics, setClientLyrics] = useState<TrackLyrics | null>(null);
 
   const videoId = track?.videoId ?? current?.videoId ?? null;
 
   useEffect(() => {
     setPinnedProvider(null);
     setPinnedLyrics(null);
+    setClientLyrics(null);
     setPickerOpen(false);
   }, [videoId]);
 
-  // A pinned provider re-fetches this song's metadata with the chain
-  // pinned to that provider — the same request the player makes, plus
-  // the pin. The global order/enabled/key travel along unchanged.
+  // A pinned provider first tries the client chain for that single
+  // provider (direct, then CORS relay), falling back to the server
+  // metadata fetch with the pin only when the client returns nothing
+  // for it. The global order/enabled/key travel along unchanged.
   useEffect(() => {
     if (!pinnedProvider || !videoId) return undefined;
     let cancelled = false;
     setPinnedLoading(true);
-    fetchTrackMeta(videoId, {
-      provider: pinnedProvider,
-      order: lyricsProviderOrder,
-      enabled: lyricsProvidersEnabled,
-      ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
-    })
-      .then((payload) => {
+    void (async () => {
+      try {
+        const client = await fetchClientProviderLyrics(
+          {
+            videoId,
+            title: track?.title ?? current?.title,
+            artist: track?.artist ?? current?.artist,
+            album: track?.album,
+            durationSeconds: track?.durationSeconds ?? current?.durationSeconds ?? undefined,
+            order: lyricsProviderOrder,
+            enabled: lyricsProvidersEnabled,
+            ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+            provider: pinnedProvider,
+          },
+        );
+        if (!cancelled && client) {
+          setPinnedLyrics({
+            synced: client.synced,
+            unsynced: client.unsynced,
+            source: client.name,
+            provider: client.provider,
+          });
+          setPinnedLoading(false);
+          return;
+        }
+      } catch {
+        // Fall through to the server pin below.
+      }
+      if (cancelled) return;
+      try {
+        const payload = await fetchTrackMeta(videoId, {
+          provider: pinnedProvider,
+          order: lyricsProviderOrder,
+          enabled: lyricsProvidersEnabled,
+          ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+        });
         if (cancelled) return;
         setPinnedLyrics(payload?.lyrics ?? null);
-        setPinnedLoading(false);
-      })
-      .catch(() => {
+      } catch {
         if (cancelled) return;
         setPinnedLyrics(null);
-        setPinnedLoading(false);
+      }
+      if (!cancelled) setPinnedLoading(false);
+    })();
+    return () => {
+      cancelled = true;
+    };
+    // `current` is intentionally read, not depended on: the pin is
+    // re-fetched on song/provider/settings change, not on every
+    // player-state tick.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pinnedProvider, videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey, track?.title, track?.artist, track?.album, track?.durationSeconds]);
+
+  // Background client best-match: run the same chain the picker uses
+  // (same order/enabled/key, aborted on song change) and replace the
+  // server lyrics ONLY when the client quality is strictly greater
+  // than the server's (or the server has none). Equal quality keeps
+  // the server result, so nothing flickers. The server translate
+  // path and PlayerContext's metadata fetch are untouched.
+  useEffect(() => {
+    if (!videoId) return undefined;
+    let cancelled = false;
+    fetchClientBestLyrics(
+      {
+        videoId,
+        title: track?.title ?? current?.title,
+        artist: track?.artist ?? current?.artist,
+        album: track?.album,
+        durationSeconds: track?.durationSeconds ?? current?.durationSeconds ?? undefined,
+        order: lyricsProviderOrder,
+        enabled: lyricsProvidersEnabled,
+        ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+      },
+    )
+      .then((best) => {
+        if (cancelled || !best) return;
+        setClientLyrics({
+          synced: best.synced,
+          unsynced: best.unsynced,
+          source: best.name,
+          provider: best.provider,
+        });
+      })
+      .catch(() => {
+        // Client chain unavailable: the server lyrics stand.
       });
     return () => {
       cancelled = true;
     };
-  }, [pinnedProvider, videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey]);
+    // `current` is read, not depended on, for the same reason as the pin.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [videoId, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey, track?.title, track?.artist, track?.album, track?.durationSeconds]);
 
-  const effectiveSynced = pinnedProvider ? pinnedLyrics?.synced : synced;
-  const effectiveUnsynced = pinnedProvider ? pinnedLyrics?.unsynced : unsynced;
-  const effectiveSource = pinnedProvider ? pinnedLyrics?.source : source;
+  const serverQuality = inferLyricsQuality(synced, unsynced);
+  const clientQuality = clientLyrics
+    ? inferLyricsQuality(clientLyrics.synced, clientLyrics.unsynced)
+    : -1;
+  const useClientLyrics =
+    !pinnedProvider && clientLyrics != null && (serverQuality === -1 || clientQuality > serverQuality);
+  const effectiveSynced = pinnedProvider ? pinnedLyrics?.synced : useClientLyrics ? clientLyrics?.synced : synced;
+  const effectiveUnsynced = pinnedProvider
+    ? pinnedLyrics?.unsynced
+    : useClientLyrics
+      ? clientLyrics?.unsynced
+      : unsynced;
+  const effectiveSource = pinnedProvider ? pinnedLyrics?.source : useClientLyrics ? clientLyrics?.source : source;
   const effectiveProvider = pinnedProvider
     ? (pinnedLyrics?.provider ?? pinnedProvider)
-    : provider;
+    : useClientLyrics
+      ? (clientLyrics?.provider ?? provider)
+      : provider;
 
   /** Defensive copy of the payload lines (bad timestamps become `0`), in
    *  timestamp order — the engine's binary search depends on it. Every

@@ -1,8 +1,11 @@
-import { useEffect, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type FormEvent } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
+import { apiGet } from '../api';
 import { useIsDesktop } from '../hooks';
 import { usePlayer } from '../player/PlayerContext';
+import { loadSearchHistory, rememberSearch } from '../utils/searchHistory';
+import { mergeSuggestionEntries, suggestionTextOf, type SuggestionEntry } from '../utils/searchSuggestions';
 import SmartDownloadWatcher from '../offline/smartDownload';
 import { useArtworkBackground, useEffectsEnabled } from '../settings/store';
 import { clearNotice, getDownloadsSnapshot, subscribeDownloads } from '../utils/downloadsStore';
@@ -14,6 +17,7 @@ import type { SvgIconProps } from './SvgIcon';
 import { Alert, Snackbar } from './ui';
 import {
   GitHubIcon,
+  HistoryIcon,
   HomeIcon,
   LibraryIcon,
   QueueListIcon,
@@ -84,6 +88,12 @@ function GlassIconButton({
  * wordmark) — the wide glass search pill in the middle, and the circular
  * glass Queue button on the right on phones only. The search pill
  * takes ⌘K / Ctrl+K focus and Enter navigates to the search page.
+ * Typing opens a glass suggestions dropdown under the pill (server
+ * suggestions plus matching recent searches, keyboard-navigable);
+ * on /search, typing debounced-updates the URL so results run live
+ * while the header — outside `<Outlet/>` — keeps focus. The pill
+ * itself is visually unchanged, and the dropdown is absolutely
+ * positioned, so opening it never moves the layout.
  * Every other section lives in the bottom navigation (phone) or the
  * permanent sidebar (desktop).
  */
@@ -92,12 +102,31 @@ function AppHeader() {
   const location = useLocation();
   const inputRef = useRef<HTMLInputElement | null>(null);
   const [term, setTerm] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(() => loadSearchHistory());
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const closeTimerRef = useRef<number | undefined>(undefined);
+  const onSearchPage = location.pathname === '/search';
 
-  // Keep the pill in sync with an arrived search (deep link / artist jump).
+  // Keep the pill in sync with an arrived search (deep link / artist
+  // jump). Guard: while the pill is focused and the user has already
+  // typed past the URL query, the typed text wins — the debounced URL
+  // update below catches up with it instead of clobbering it.
   useEffect(() => {
     if (location.pathname !== '/search') return;
     const query = new URLSearchParams(location.search).get('query') || '';
-    setTerm(query);
+    setTerm((current) => {
+      if (
+        document.activeElement === inputRef.current &&
+        query &&
+        current.startsWith(query) &&
+        current.length > query.length
+      ) {
+        return current;
+      }
+      return query;
+    });
   }, [location.pathname, location.search]);
 
   // ⌘K / Ctrl+K focuses the pill from anywhere in the app.
@@ -113,11 +142,73 @@ function AppHeader() {
     return () => document.removeEventListener('keydown', onKey);
   }, []);
 
-  const submit = (event: FormEvent) => {
-    event.preventDefault();
+  // Debounced server suggestions for the typed term.
+  useEffect(() => {
+    const trimmed = term.trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      setActiveIndex(-1);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      apiGet('/search/suggestions', { query: trimmed })
+        .then((payload) => {
+          const list = Array.isArray(payload)
+            ? payload.map((entry: unknown) => suggestionTextOf(entry)).filter(Boolean)
+            : [];
+          setSuggestions(list);
+        })
+        .catch(() => setSuggestions([]));
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [term]);
+
+  // On /search, typing debounced-updates the URL (replace) so the
+  // URL-driven results run live while the header keeps focus. Off
+  // /search, typing only feeds the dropdown; Enter/selection navigates.
+  useEffect(() => {
+    if (!onSearchPage) return undefined;
+    const trimmed = term.trim();
+    const timer = window.setTimeout(() => {
+      const current = new URLSearchParams(location.search).get('query') || '';
+      if (trimmed === current) return;
+      const next = new URLSearchParams(location.search);
+      if (trimmed) next.set('query', trimmed);
+      else next.delete('query');
+      navigate({ pathname: '/search', search: next.toString() }, { replace: true });
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [term, onSearchPage, location.search, navigate]);
+
+  const entries: SuggestionEntry[] = useMemo(
+    () => mergeSuggestionEntries(history, suggestions, term),
+    [history, suggestions, term],
+  );
+
+  const select = (text: string) => {
+    const query = text.trim();
+    if (!query) return;
+    setTerm(query);
+    setHistory(rememberSearch(query));
+    setDropdownOpen(false);
+    setActiveIndex(-1);
+    navigate(`/search?query=${encodeURIComponent(query)}`);
+    inputRef.current?.blur();
+  };
+
+  const submit = (event?: FormEvent) => {
+    event?.preventDefault();
     const query = term.trim();
+    setDropdownOpen(false);
+    setActiveIndex(-1);
+    if (query) setHistory(rememberSearch(query));
     navigate(query ? `/search?query=${encodeURIComponent(query)}` : '/search');
     inputRef.current?.blur();
+  };
+
+  const closeSoon = () => {
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setDropdownOpen(false), 150);
   };
 
   return (
@@ -135,7 +226,7 @@ function AppHeader() {
         <form
           onSubmit={submit}
           role="search"
-          className="pointer-events-auto min-w-0 flex-1 md:mx-auto md:max-w-[560px]"
+          className="pointer-events-auto relative min-w-0 flex-1 md:mx-auto md:max-w-[560px]"
         >
           <div className="glass-pill flex h-11 items-center gap-2 rounded-full px-3.5 shadow-glass transition focus-within:border-white/40">
             <SearchIcon fontSize="small" className="shrink-0 opacity-80" />
@@ -143,15 +234,83 @@ function AppHeader() {
               ref={inputRef}
               type="search"
               value={term}
-              onChange={(event) => setTerm(event.target.value)}
+              onChange={(event) => {
+                setTerm(event.target.value);
+                setDropdownOpen(true);
+                setActiveIndex(-1);
+              }}
+              onFocus={() => {
+                window.clearTimeout(closeTimerRef.current);
+                setHistory(loadSearchHistory());
+                setDropdownOpen(true);
+              }}
+              onBlur={closeSoon}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  if (!entries.length) return;
+                  setDropdownOpen(true);
+                  setActiveIndex((index) => (index + 1) % entries.length);
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  if (!entries.length) return;
+                  setDropdownOpen(true);
+                  setActiveIndex((index) => (index - 1 + entries.length) % entries.length);
+                } else if (event.key === 'Enter' && activeIndex >= 0 && entries[activeIndex]) {
+                  event.preventDefault();
+                  select(entries[activeIndex].text);
+                } else if (event.key === 'Escape') {
+                  setDropdownOpen(false);
+                  setActiveIndex(-1);
+                }
+              }}
               placeholder="Search songs, albums, artists…"
               aria-label="Search songs, albums, artists"
+              role="combobox"
+              aria-expanded={dropdownOpen && entries.length > 0}
+              aria-controls="header-search-suggestions"
+              aria-activedescendant={
+                activeIndex >= 0 ? `header-suggestion-${activeIndex}` : undefined
+              }
+              aria-autocomplete="list"
               className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
             />
             <kbd className="hidden shrink-0 items-center rounded-md border border-white/25 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white/80 sm:flex">
               ⌘K
             </kbd>
           </div>
+          {dropdownOpen && entries.length > 0 && (
+            <div
+              id="header-search-suggestions"
+              role="listbox"
+              aria-label="Search suggestions"
+              className="glass-pill absolute left-0 right-0 top-full z-[1300] mt-2 max-h-[60vh] overflow-y-auto rounded-[20px] shadow-glass"
+            >
+              <ul className="m-0 list-none p-1.5">
+                {entries.map((entry, index) => (
+                  <li
+                    key={`${entry.kind}:${entry.text}`}
+                    id={`header-suggestion-${index}`}
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => select(entry.text)}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 rounded-[14px] px-3 py-2.5 text-sm text-white transition hover:bg-white/10',
+                      index === activeIndex && 'bg-white/10',
+                    )}
+                  >
+                    {entry.kind === 'history' ? (
+                      <HistoryIcon fontSize="small" className="shrink-0 opacity-80" />
+                    ) : (
+                      <SearchIcon fontSize="small" className="shrink-0 opacity-80" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{entry.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
         </form>
         <div className="pointer-events-auto flex shrink-0 items-center">
           {/* Phones only: Queue lives in the sidebar on desktop. */}

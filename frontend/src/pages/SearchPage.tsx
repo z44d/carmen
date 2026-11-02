@@ -1,14 +1,5 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import {
-  Chip,
-  Container,
-  IconButton,
-  List,
-  ListItemButton,
-  ListItemText,
-  Shimmer,
-  TextField,
-} from '../components/ui';
+import { useEffect, useMemo, useState } from 'react';
+import { Chip, Container, Shimmer } from '../components/ui';
 import { useSearchParams } from 'react-router-dom';
 
 import { apiGet } from '../api';
@@ -18,7 +9,7 @@ import { loadSearchHistory, rememberSearch } from '../utils/searchHistory';
 import type { Track } from '../types/models';
 import MediaCard from '../components/MediaCard';
 import TrackList, { EmptyState } from '../components/TrackList';
-import { CloseIcon, HistoryIcon, SearchIcon } from '../components/icons';
+import { HistoryIcon } from '../components/icons';
 import { cn } from '../utils/cn';
 
 const FILTERS: { id: string; label: string }[] = [
@@ -53,17 +44,6 @@ function isTrackLike(item: unknown): boolean {
   return Boolean(record.videoId) && Boolean(record.artists || record.album || record.duration || record.length);
 }
 
-/** Display text of one suggestion entry (`""` when it has none). */
-function textOf(entry: unknown): string {
-  if (typeof entry === 'string') return entry;
-  if (entry && typeof entry === 'object') {
-    const record = entry as Record<string, unknown>;
-    const text = record.text || record.query;
-    if (typeof text === 'string') return text;
-  }
-  return '';
-}
-
 /** React `key` of a result card: first identity field it carries. */
 function cardKey(item: Record<string, unknown>, index: number): string {
   const identity = item.videoId || item.browseId || item.playlistId;
@@ -71,78 +51,50 @@ function cardKey(item: Record<string, unknown>, index: number): string {
   return String(index);
 }
 
-/** Search page with suggestions, type filters and mixed results. */
+/**
+ * Search page — URL-driven only. The single search field lives in the
+ * app header (`Layout.tsx`, with its suggestions dropdown); this page
+ * carries no search field of its own. `?query=` and `?filter=` are the
+ * whole state: typing in the header updates the URL (debounced,
+ * replace) and the results run live, and arriving here with a
+ * different query (the "Go to artist" / "Go to album" jumps in the
+ * player's ⋯ menu) runs a new search. With no query, a tidy empty
+ * state plus the user's real recent searches as tappable chips — no
+ * fake or trending data.
+ */
 export default function SearchPage() {
   const player = usePlayer();
   const [searchParams, setSearchParams] = useSearchParams();
-  const initialQuery = searchParams.get('query') || '';
 
-  const [input, setInput] = useState(initialQuery);
-  const [query, setQuery] = useState(initialQuery);
-  const [filter, setFilter] = useState(() => filterFromParams(searchParams));
+  const query = searchParams.get('query') || '';
+  const filter = filterFromParams(searchParams);
+
   const [results, setResults] = useState<Record<string, unknown>[]>([]);
-  const [suggestions, setSuggestions] = useState<string[]>([]);
   const [history, setHistory] = useState<string[]>(loadSearchHistory);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [showSuggestions, setShowSuggestions] = useState(false);
-  const debounceRef = useRef<number | undefined>(undefined);
 
-  // Keep the URL in sync so results can be shared / deep linked — the
-  // active filter rides along as `?filter=` (omitted while it is the
-  // default Songs tab, spelled `all` for the All tab).
+  // Refresh the recent-search chips whenever the page lands on an
+  // empty query (history may have grown from the header meanwhile).
   useEffect(() => {
+    if (!query) setHistory(loadSearchHistory());
+  }, [query]);
+
+  /** Navigate to a new query/filter, preserving the other param. */
+  const goTo = (nextQuery: string, nextFilter: string) => {
     const next = new URLSearchParams();
-    if (query) next.set('query', query);
-    if (filter !== DEFAULT_FILTER) next.set('filter', filter || 'all');
+    if (nextQuery) next.set('query', nextQuery);
+    if (nextFilter !== DEFAULT_FILTER) next.set('filter', nextFilter || 'all');
     setSearchParams(next, { replace: true });
-  }, [query, filter, setSearchParams]);
+  };
 
-  // …and the other way round: arriving here with a *different* query (the
-  // "Go to artist" / "Go to album" jumps in the player's ⋯ menu) has to run
-  // a new search, because the query lives in this component's state.  A
-  // change we made ourselves always matches `queryRef` and is skipped, so a
-  // filter the user picked survives their own typing.
-  const queryRef = useRef(query);
-  queryRef.current = query;
-  useEffect(() => {
-    const target = searchParams.get('query') || '';
-    if (target === queryRef.current) return;
-    setQuery(target);
-    setInput(target);
-    // an externally arrived search starts from the URL's filter — which
-    // defaults back to Songs when the link carries none
-    setFilter(filterFromParams(searchParams));
-  }, [searchParams]);
-
-  // Debounced typing -> suggestions
-  useEffect(() => {
-    window.clearTimeout(debounceRef.current);
-    const term = input.trim();
-    if (!term || term === query) {
-      setSuggestions([]);
-      return undefined;
-    }
-    debounceRef.current = window.setTimeout(() => {
-      apiGet('/search/suggestions', { query: term })
-        .then((payload) => {
-          const list = Array.isArray(payload)
-            ? payload.map((entry: unknown) => textOf(entry)).filter((entry: string) => Boolean(entry))
-            : [];
-          setSuggestions(list.slice(0, 8));
-        })
-        .catch(() => setSuggestions([]));
-    }, 220);
-    return () => window.clearTimeout(debounceRef.current);
-  }, [input, query]);
-
-  // Run the search
+  // Run the search whenever the URL query or filter changes.
   useEffect(() => {
     const term = query.trim();
-    setSuggestions([]);
     if (!term) {
       setResults([]);
       setError(null);
+      setLoading(false);
       return undefined;
     }
     let cancelled = false;
@@ -180,90 +132,15 @@ export default function SearchPage() {
     };
   }, [results]);
 
-  const submit = (value?: string) => {
-    const term = (value ?? input).trim();
-    setShowSuggestions(false);
-    setInput(term);
-    setQuery(term);
-    if (term) setHistory(rememberSearch(term));
+  const runRecent = (term: string) => {
+    setHistory(rememberSearch(term));
+    goTo(term, filter);
   };
-
-  // Dropdown rows: the recent searches first (matching what's typed, or all
-  // of them while the field is empty), then the server's suggestions —
-  // deduped case-insensitively and typed so the key never collides.
-  const entries = useMemo(() => {
-    const needle = input.trim().toLowerCase();
-    const seen = new Set<string>();
-    const rows: { kind: 'history' | 'suggestion'; text: string }[] = [];
-    for (const text of history) {
-      if (needle && !text.toLowerCase().includes(needle)) continue;
-      const key = text.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({ kind: 'history', text });
-    }
-    for (const text of suggestions) {
-      const key = text.toLowerCase();
-      if (seen.has(key)) continue;
-      seen.add(key);
-      rows.push({ kind: 'suggestion', text });
-    }
-    return rows;
-  }, [history, suggestions, input]);
 
   return (
     <Container maxWidth="lg" className="!px-0 pt-4 md:pt-6">
       <div className="flex flex-col gap-4 px-4 md:px-10">
-        <div>
-          <h5 className="m-0 mb-3 text-[26px] font-extrabold tracking-[-0.01em]">Search</h5>
-          <TextField
-            fullWidth
-            value={input}
-            placeholder="Songs, artists, albums, playlists…"
-            onChange={(event) => {
-              setInput(event.target.value);
-              setShowSuggestions(true);
-            }}
-            startAdornment={<SearchIcon color="action" />}
-            endAdornment={
-              input ? (
-                <IconButton size="small" aria-label="Clear search" onClick={() => submit('')}>
-                  <CloseIcon fontSize="small" />
-                </IconButton>
-              ) : null
-            }
-            className="[&_div]:!rounded-full"
-            inputProps={{
-              // The pill field used to carry these on the input slot.
-              onFocus: () => setShowSuggestions(true),
-              onBlur: () => window.setTimeout(() => setShowSuggestions(false), 150),
-              onKeyDown: (event) => {
-                if (event.key === 'Enter') submit();
-              },
-            }}
-          />
-
-          {showSuggestions && entries.length > 0 && (
-            <List className="relative z-[2] mt-1 rounded-2xl border border-line bg-surface !py-1">
-              {entries.map((entry) => (
-                <ListItemButton
-                  key={`${entry.kind}:${entry.text}`}
-                  onMouseDown={(event) => event.preventDefault()}
-                  onClick={() => submit(entry.text)}
-                  className="mx-1 !rounded-xl"
-                >
-                  {/* history keeps the clock; suggestions get the magnifier */}
-                  {entry.kind === 'history' ? (
-                    <HistoryIcon fontSize="small" color="action" sx={{ mr: 1.5 }} />
-                  ) : (
-                    <SearchIcon fontSize="small" color="action" sx={{ mr: 1.5 }} />
-                  )}
-                  <ListItemText primary={entry.text} primaryClassName="font-normal" />
-                </ListItemButton>
-              ))}
-            </List>
-          )}
-        </div>
+        <h5 className="m-0 text-[26px] font-extrabold tracking-[-0.01em]">Search</h5>
 
         <div className="flex flex-row gap-2 overflow-x-auto pb-1">
           {FILTERS.map((option) => (
@@ -271,7 +148,7 @@ export default function SearchPage() {
               key={option.id || 'all'}
               label={option.label}
               variant="outlined"
-              onClick={() => setFilter(option.id)}
+              onClick={() => goTo(query, option.id)}
               className={cn(
                 'h-9 shrink-0 cursor-pointer !rounded-full !px-4 !text-sm !font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-accent',
                 filter === option.id
@@ -281,6 +158,34 @@ export default function SearchPage() {
             />
           ))}
         </div>
+
+        {!query && !loading && (
+          <div className="flex flex-col items-center gap-3 px-4 py-10 text-center">
+            <p className="m-0 text-base font-semibold text-body">Search from the bar above</p>
+            <span className="block max-w-[340px] text-sm leading-[1.5] text-muted">
+              Type a song, artist, album or playlist — suggestions appear as you type.
+            </span>
+            {history.length > 0 && (
+              <div className="mt-2 flex flex-col items-center gap-2">
+                <span className="flex items-center gap-1.5 text-xs font-semibold uppercase tracking-wide text-disabled">
+                  <HistoryIcon fontSize="small" />
+                  Recent searches
+                </span>
+                <div className="flex flex-wrap justify-center gap-2">
+                  {history.map((term) => (
+                    <Chip
+                      key={term}
+                      label={term}
+                      variant="outlined"
+                      onClick={() => runRecent(term)}
+                      className="h-9 shrink-0 cursor-pointer !rounded-full !px-4 !text-sm !font-medium !border-line !bg-transparent !text-body hover:!text-body"
+                    />
+                  ))}
+                </div>
+              </div>
+            )}
+          </div>
+        )}
 
         {loading && (
           <div className="flex flex-col gap-3">

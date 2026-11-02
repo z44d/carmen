@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react';
 
 import { fetchLyricsProviders } from '../api';
+import { fetchClientProviderResults } from '../lyrics/chain';
 import { useSettings } from '../settings/store';
 import { lyricsChainLabel, type ProviderLyricsResult } from '../types/models';
 import { cn } from '../utils/cn';
@@ -10,8 +11,16 @@ import { Dialog, DialogContent, DialogTitle } from './ui';
 /**
  * Provider picker — Android's `LyricsSearchResultDialog`, ported.
  *
- * Lists every enabled chain provider's lyrics for the playing song
- * (from `GET /browsing/lyrics/providers`): provider name, sync badge
+ * Lists every enabled chain provider's lyrics for the playing song.
+ * The results come from the client-side chain in the browser (direct
+ * fetch, then a public CORS relay for origins that send no
+ * `Access-Control-Allow-Origin` header — Paxsenix stays direct-only).
+ * The Carmen server endpoint `GET /browsing/lyrics/providers` is only
+ * a last resort, for exactly the providers whose direct + relay
+ * fetches both failed, and a 500 from an old server is ignored when
+ * client results exist — so the picker never shows the old
+ * "Could not reach" error while direct results are on screen.
+ * Provider name, sync badge
  * (Word synced / Synced / Plain), line + character counts, and a
  * preview that expands from 2 lines to 8. Tapping a card pins that
  * provider for this song only — the global chain order in Settings
@@ -90,30 +99,82 @@ export default function LyricsProviderPicker({
   const [attempt, setAttempt] = useState(0);
 
   const load = useCallback(
-    (signal: AbortSignal) => {
+    async (signal: AbortSignal) => {
       setState('loading');
-      fetchLyricsProviders(
-        {
-          videoId,
-          title,
-          artist,
-          album,
-          duration: durationSeconds,
-          order: lyricsProviderOrder,
-          enabled: lyricsProvidersEnabled,
-          ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
-        },
-        signal,
-      )
-        .then((payload) => {
-          if (signal.aborted) return;
-          setResults(Array.isArray(payload?.results) ? payload.results : []);
-          setState('done');
-        })
-        .catch((error) => {
+      const query = {
+        videoId,
+        title,
+        artist,
+        album,
+        durationSeconds,
+        order: lyricsProviderOrder,
+        enabled: lyricsProvidersEnabled,
+        ...(paxsenixApiKey ? { paxsenixKey: paxsenixApiKey } : {}),
+      };
+      // Layer 1+2: the client chain (direct, then CORS relay).
+      let clientEntries: ProviderLyricsResult[] = [];
+      let clientFailed = false;
+      try {
+        clientEntries = await fetchClientProviderResults(query, signal);
+      } catch (error) {
+        if (signal.aborted || (error as Error)?.name === 'AbortError') return;
+        clientFailed = true;
+      }
+      if (signal.aborted) return;
+      // Layer 3: the server endpoint, only for the ids that failed
+      // both browser layers (or every enabled id if the client chain
+      // itself threw). A 500 from a pre-lyrics-port server is ignored
+      // whenever client results exist.
+      const failedIds = clientEntries
+        .filter((entry) => (entry as { directFailed?: boolean }).directFailed)
+        .map((entry) => entry.provider);
+      const fallbackIds = clientFailed
+        ? lyricsProviderOrder.filter((id) => lyricsProvidersEnabled?.[id] !== false)
+        : failedIds;
+      let merged: ProviderLyricsResult[] = clientEntries;
+      if (fallbackIds.length) {
+        try {
+          const payload = await fetchLyricsProviders(
+            {
+              ...query,
+              duration: durationSeconds,
+              order: fallbackIds,
+              enabled: lyricsProvidersEnabled,
+            },
+            signal,
+          );
+          const serverResults = (
+            Array.isArray(payload?.results) ? payload.results : []
+          ).filter((result) => fallbackIds.includes(result.provider));
+          if (serverResults.length) {
+            if (clientFailed) {
+              merged = [...serverResults].sort(
+                (a, b) => fallbackIds.indexOf(a.provider) - fallbackIds.indexOf(b.provider),
+              );
+            } else {
+              const byProvider = new Map(serverResults.map((result) => [result.provider, result]));
+              merged = clientEntries.map((entry) => byProvider.get(entry.provider) ?? entry);
+              for (const result of serverResults) {
+                if (!merged.some((entry) => entry.provider === result.provider)) {
+                  merged.push(result);
+                }
+              }
+            }
+          }
+        } catch (error) {
           if (signal.aborted || (error as Error)?.name === 'AbortError') return;
-          setState('error');
-        });
+          // Server fallback failed (old server, offline): keep the
+          // client results. Only a wholesale client failure with no
+          // server results at all is an error state.
+        }
+      }
+      if (signal.aborted) return;
+      if (clientFailed && merged.length === 0) {
+        setState('error');
+        return;
+      }
+      setResults(merged);
+      setState('done');
     },
     [videoId, title, artist, album, durationSeconds, lyricsProviderOrder, lyricsProvidersEnabled, paxsenixApiKey],
   );
