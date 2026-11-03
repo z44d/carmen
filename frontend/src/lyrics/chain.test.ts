@@ -128,8 +128,10 @@ describe('client chain all-results', () => {
       order: ['youtube-music', 'youtube-subtitle'],
     });
     // No serverOnly flag remains: both run in the browser. In this
-    // fixture the watch page is unreachable, so both are empty —
-    // and the subtitle row carries the gated reason.
+    // fixture no YouTube surface carries player data, so both are
+    // empty — and the subtitle row carries the unresolved reason
+    // (a shell page is not a gate; 'gated' needs a player response
+    // whose playability status is not OK).
     expect(entries).toHaveLength(2);
     for (const entry of entries) {
       expect(entry.available).toBe(true);
@@ -138,7 +140,32 @@ describe('client chain all-results', () => {
       expect('serverOnly' in entry).toBe(false);
     }
     const subtitle = entries.find((e) => e.provider === 'youtube-subtitle')!;
-    expect(subtitle.emptyReason).toBe('gated');
+    expect(subtitle.emptyReason).toBe('unresolved');
+  });
+
+  it('names the SimpMusic client gate on a failed SimpMusic result', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async (input: string) => {
+        if (String(input).includes('simpmusic.org')) {
+          return textResponse(
+            '{"success": false, "error": {"error": true, "code": 403, "reason": "This API is only available to SimpMusic clients"}}',
+            403,
+          );
+        }
+        return textResponse('', 404);
+      }),
+    );
+    const entries = await fetchClientProviderResults({
+      videoId: 'gate-1',
+      title: 'Song',
+      artist: 'Artist',
+      durationSeconds: 100,
+      order: ['simpmusic'],
+    });
+    expect(entries).toHaveLength(1);
+    expect(entries[0].directFailed).toBe(true);
+    expect(entries[0].failedReason).toBe('Only available to SimpMusic clients');
   });
 
   it('never fetches a Carmen server URL from the lyrics path', async () => {

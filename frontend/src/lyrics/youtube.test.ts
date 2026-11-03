@@ -5,11 +5,16 @@ import {
   extractJsonObject,
   extractVisitorData,
   findLyricsBrowseIds,
+  findLyricsEndpoint,
   getSubtitleStatus,
   getYoutubeMusicLyrics,
   getYoutubeSubtitleLyrics,
   INNERTUBE_API_KEY,
   postInnertube,
+  scanPayloadForYoutubeData,
+  transcriptCues,
+  transcriptParams,
+  WEB_REMIX_CLIENT,
 } from './youtube';
 
 type FetchMock = ReturnType<typeof vi.fn>;
@@ -242,8 +247,15 @@ describe('YouTube Music (browser)', () => {
       }
       if (url.includes('youtubei/v1/browse')) {
         const body = JSON.parse(String(init?.body ?? '{}'));
+        // The WEB_REMIX browse (plain shelf) is tried first and
+        // finds nothing in this fixture; the bare ANDROID_MUSIC
+        // browse (the _browse_mobile shape) carries timed lines.
+        if (body.context.client.clientName === 'WEB_REMIX') {
+          return textResponse(JSON.stringify({}));
+        }
         expect(body.browseId).toBe('MPLYtTEST123');
         expect(body.context.client.clientName).toBe('ANDROID_MUSIC');
+        expect(body.context.client.visitorData).toBeUndefined();
         return textResponse(JSON.stringify(browsePayload));
       }
       throw new TypeError('Failed to fetch');
@@ -297,5 +309,228 @@ describe('YouTube Music (browser)', () => {
       expect(String(url)).not.toContain('browsing/');
       expect(String(url)).not.toContain('api-carmen');
     }
+  });
+});
+
+describe('get_transcript (Android route, no PoToken)', () => {
+  it('builds the exact Android params: base64 of newline + 0x0b + videoId', () => {
+    const params = transcriptParams('uJdu4Lfy8aI');
+    expect(atob(params)).toBe('\n\x0buJdu4Lfy8aI');
+  });
+
+  it('parses cue groups into timed lines, trimming music notes', () => {
+    const payload = {
+      actions: [
+        {
+          updateEngagementPanelAction: {
+            content: {
+              transcriptRenderer: {
+                body: {
+                  transcriptBodyRenderer: {
+                    cueGroups: [
+                      {
+                        transcriptCueGroupRenderer: {
+                          cues: [
+                            {
+                              transcriptCueRenderer: {
+                                startOffsetMs: 1000,
+                                cue: { simpleText: '♪ First line ♪' },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                      {
+                        transcriptCueGroupRenderer: {
+                          cues: [
+                            {
+                              transcriptCueRenderer: {
+                                startOffsetMs: 4500,
+                                cue: { simpleText: 'Second line' },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+    expect(transcriptCues(payload)).toEqual([
+      { timeMs: 1000, text: 'First line' },
+      { timeMs: 4500, text: 'Second line' },
+    ]);
+    expect(transcriptCues({ actions: [] })).toBeNull();
+    expect(transcriptCues({})).toBeNull();
+  });
+
+  it('tries get_transcript first and returns its cues as LRC', async () => {
+    const transcriptPayload = {
+      actions: [
+        {
+          updateEngagementPanelAction: {
+            content: {
+              transcriptRenderer: {
+                body: {
+                  transcriptBodyRenderer: {
+                    cueGroups: [
+                      {
+                        transcriptCueGroupRenderer: {
+                          cues: [
+                            {
+                              transcriptCueRenderer: {
+                                startOffsetMs: 0,
+                                cue: { simpleText: 'Transcript line' },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+          },
+        },
+      ],
+    };
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      if (url.includes('youtubei/v1/get_transcript')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        expect(body.params).toBe(transcriptParams('tr-ok'));
+        expect(body.context.client.clientName).toBe(WEB_REMIX_CLIENT.clientName);
+        expect(body.context.client.clientVersion).toBe(WEB_REMIX_CLIENT.clientVersion);
+        expect(body.context.client.gl).toBe('US');
+        return textResponse(JSON.stringify(transcriptPayload));
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    const result = await getYoutubeSubtitleLyrics(
+      { videoId: 'tr-ok', title: 'Song', artist: 'Artist', album: '', durationSeconds: null },
+      undefined,
+    );
+    expect(result).toBe('[00:00.00]Transcript line');
+    expect(getSubtitleStatus('tr-ok')).toBe('ok');
+  });
+
+  it('reports unresolved (not gated) for a shell page with no player data', async () => {
+    fetchMock.mockImplementation(async (url: string) => {
+      if (url.includes('youtubei/v1/')) throw new TypeError('Failed to fetch');
+      if (url.includes('api.allorigins.win') || url.includes('proxy.cors.dev')) {
+        // The JS shell: no ytInitialPlayerResponse, no ytInitialData.
+        return textResponse('<html><head><script>window.WIZ_global_data = {};</script></head></html>');
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    const result = await getYoutubeSubtitleLyrics(
+      { videoId: 'shell-1', title: 'Song', artist: 'Artist', album: '', durationSeconds: null },
+      undefined,
+    );
+    expect(result).toBeNull();
+    expect(getSubtitleStatus('shell-1')).toBe('unresolved');
+  });
+});
+
+describe('pbj=1 payload scan + lyrics endpoint preference', () => {
+  it('finds the player response and MPLYt ids inside a pbj array', () => {
+    const playerResponse = {
+      playabilityStatus: { status: 'OK' },
+      captions: { playerCaptionsTracklistRenderer: { captionTracks: [] } },
+    };
+    const scanned = scanPayloadForYoutubeData([
+      { playerResponse },
+      { response: { contents: [{ browseEndpoint: { browseId: 'MPLYtPBJ1' } }] } },
+    ]);
+    expect(scanned.playerResponse).toEqual(playerResponse);
+    expect(scanned.browseIds).toEqual(['MPLYtPBJ1']);
+    expect(scanPayloadForYoutubeData({})).toEqual({ playerResponse: null, browseIds: [] });
+  });
+
+  it('prefers the lyrics tab (tabs[1]) endpoint with its params', () => {
+    const payload = {
+      contents: {
+        singleColumnMusicWatchNextResultsRenderer: {
+          tabbedRenderer: {
+            watchNextTabbedResultsRenderer: {
+              tabs: [
+                { tabRenderer: { endpoint: { browseEndpoint: { browseId: 'MPLYtQUEUE' } } } },
+                {
+                  tabRenderer: {
+                    endpoint: {
+                      browseEndpoint: { browseId: 'MPLYtLYRICS', params: 'wAEB' },
+                    },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    expect(findLyricsEndpoint(payload)).toEqual({ browseId: 'MPLYtLYRICS', params: 'wAEB' });
+    expect(findLyricsEndpoint({})).toBeNull();
+  });
+
+  it('resolves lyrics via the WEB_REMIX next POST before any watch page', async () => {
+    const nextPayload = {
+      contents: {
+        singleColumnMusicWatchNextResultsRenderer: {
+          tabbedRenderer: {
+            watchNextTabbedResultsRenderer: {
+              tabs: [
+                { tabRenderer: { endpoint: { browseEndpoint: { browseId: 'MPLYtQ' } } } },
+                {
+                  tabRenderer: {
+                    endpoint: { browseEndpoint: { browseId: 'MPLYtNEXT', params: 'p1' } },
+                  },
+                },
+              ],
+            },
+          },
+        },
+      },
+    };
+    const seen: string[] = [];
+    fetchMock.mockImplementation(async (url: string, init?: RequestInit) => {
+      seen.push(String(url));
+      if (url.includes('youtubei/v1/next')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        expect(url).toContain('music.youtube.com');
+        expect(body.context.client.clientName).toBe('WEB_REMIX');
+        expect(body.videoId).toBe('music-next');
+        return textResponse(JSON.stringify(nextPayload));
+      }
+      if (url.includes('youtubei/v1/browse')) {
+        const body = JSON.parse(String(init?.body ?? '{}'));
+        expect(body.browseId).toBe('MPLYtNEXT');
+        expect(body.params).toBe('p1');
+        if (body.context.client.clientName === 'WEB_REMIX') {
+          return textResponse(
+            JSON.stringify({
+              contents: {
+                musicDescriptionShelfRenderer: {
+                  description: { runs: [{ text: 'Next lyrics\nverse two' }] },
+                },
+              },
+            }),
+          );
+        }
+        return textResponse(JSON.stringify({}));
+      }
+      throw new TypeError('Failed to fetch');
+    });
+    const result = await getYoutubeMusicLyrics(
+      { videoId: 'music-next', title: 'Song', artist: 'Artist', album: '', durationSeconds: null },
+      undefined,
+    );
+    expect(result).toBe('Next lyrics\nverse two');
+    // The watch page was never needed: no relay watch fetch happened.
+    expect(seen.some((u) => u.includes('watch'))).toBe(false);
   });
 });

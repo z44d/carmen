@@ -73,10 +73,16 @@ export interface ClientProviderEntry extends ProviderLyricsResult {
   quality: number | null;
   /**
    * Machine-readable empty reason from the provider (`no-captions`
-   * / `gated` for YouTube Subtitle), for the picker's reason label.
-   * Absent = the generic "no lyrics found" label.
+   * / `gated` / `unresolved` for YouTube Subtitle), for the picker's
+   * reason label. Absent = the generic "no lyrics found" label.
    */
   emptyReason?: string | null;
+  /**
+   * Provider-known failure reason for a failed result (e.g.
+   * SimpMusic's client gate), for the picker's reason label.
+   * Absent = the generic "Couldn't reach provider" label.
+   */
+  failedReason?: string | null;
 }
 
 function toContext(query: ClientLyricsQuery): ProviderContext {
@@ -349,6 +355,9 @@ async function runChainInternal(
         directFailed: wasFailed,
         quality: null,
         emptyReason: def?.describeEmpty?.(ctx) ?? null,
+        // A gate reason only names a failure: an empty-but-answered
+        // provider keeps the generic empty label.
+        failedReason: wasFailed ? (def?.describeFailed?.(ctx) ?? null) : null,
       });
       continue;
     }

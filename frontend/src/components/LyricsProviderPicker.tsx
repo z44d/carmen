@@ -42,7 +42,7 @@ interface LyricsProviderPickerProps {
 type LoadState = 'loading' | 'error' | 'done';
 
 function syncBadge(
-  result: ProviderLyricsResult & { emptyReason?: string | null; directFailed?: boolean },
+  result: ProviderLyricsResult & { emptyReason?: string | null; directFailed?: boolean; failedReason?: string | null },
   hasPaxsenixKey: boolean,
 ): string {
   if (result.synced?.length) {
@@ -62,8 +62,14 @@ function syncBadge(
   // Transport / upstream failure (direct fetch AND every relay
   // failed, or the upstream gated the query) is NOT "no lyrics
   // found": the provider never got to answer. Only a provider that
-  // answered with nothing gets the empty label.
+  // answered with nothing gets the empty label. A provider-known
+  // gate (SimpMusic) names itself; an unresolved YouTube shell
+  // page is a failure too, never "Not available on web".
+  if (result.directFailed && result.failedReason) return result.failedReason;
   if (result.directFailed) return "Couldn't reach provider — try again";
+  if (result.provider === 'youtube-subtitle' && result.emptyReason === 'unresolved') {
+    return "Couldn't reach provider — try again";
+  }
   if (result.provider === 'youtube-subtitle' && result.emptyReason === 'no-captions') {
     return 'No captions for this video';
   }

@@ -73,6 +73,13 @@ export interface ProviderDefinition {
    * Subtitle: no captions vs gated). `null` = the generic label.
    */
   describeEmpty?: (ctx: ProviderContext) => string | null;
+  /**
+   * Reason label for a FAILED result (transport/upstream failure),
+   * when the provider knows the failure is a permanent gate rather
+   * than a transient outage (SimpMusic: User-Agent gate). `null` =
+   * the generic "Couldn't reach provider" label.
+   */
+  describeFailed?: (ctx: ProviderContext) => string | null;
   getLyrics: ProviderFetch;
   getAllLyrics: ProviderFetchAll;
 }
@@ -793,7 +800,20 @@ async function simpMusicTracks(videoId: string, signal?: AbortSignal): Promise<S
     signal,
   );
   // SimpMusic now answers 403 "only available to SimpMusic clients"
-  // on every transport: an upstream gate, not "no lyrics".
+  // on every transport: an upstream gate, not "no lyrics". The gate
+  // is the User-Agent header, proven live 2026-11-03: the exact
+  // Android request (`User-Agent: SimpMusicLyrics/1.0`, from
+  // `SimpMusicLyrics.kt`) returns 200 with real lyrics, any other
+  // UA (browser UA, curl default, the cors.dev relay's own UA)
+  // returns 403, and the check is a prefix match on
+  // "SimpMusicLyrics". A browser cannot set User-Agent (forbidden
+  // fetch header) and neither public relay forwards a caller-set
+  // UA — cors.dev overwrites it with its own and drops custom
+  // headers (verified against an echo endpoint), AllOrigins was
+  // 522/520, corsproxy.io needs an API key, Corsfix needs the
+  // domain registered in its dashboard. There is therefore no
+  // browser-side route to this API today; the failure label says
+  // so honestly instead of pretending the provider is down.
   throwIfUpstreamFailure(result);
   if (result.status !== 200) return [];
   const payload = parseJsonLenient(result.text);
@@ -1365,7 +1385,8 @@ async function buildRegistry(): Promise<ProviderDefinition[]> {
     { id: 'lrclib', name: 'LrcLib', requiresKey: false, alwaysUnavailable: false, getLyrics: lrclibGet, getAllLyrics: lrclibGetAll },
     { id: 'kugou', name: 'Kugou', requiresKey: false, alwaysUnavailable: false, getLyrics: kugouGet, getAllLyrics: kugouGetAll },
     { id: 'megalobiz', name: 'Megalobiz', requiresKey: false, alwaysUnavailable: false, getLyrics: megalobizGet, getAllLyrics: megaAll },
-    { id: 'simpmusic', name: 'SimpMusic', requiresKey: false, alwaysUnavailable: false, getLyrics: simpmusicGet, getAllLyrics: simpmusicGetAll },
+    { id: 'simpmusic', name: 'SimpMusic', requiresKey: false, alwaysUnavailable: false, getLyrics: simpmusicGet, getAllLyrics: simpmusicGetAll,
+      describeFailed: () => 'Only available to SimpMusic clients' },
     { id: 'unison', name: 'Unison', requiresKey: false, alwaysUnavailable: false, getLyrics: unisonGet, getAllLyrics: unisonGetAll },
     { id: 'paxsenix-apple-music', name: 'Paxsenix: Apple Music', requiresKey: true, alwaysUnavailable: false, getLyrics: paxApple.getLyrics, getAllLyrics: paxApple.getAllLyrics },
     { id: 'paxsenix-spotify', name: 'Paxsenix: Spotify', requiresKey: true, alwaysUnavailable: false, getLyrics: paxSpotify.getLyrics, getAllLyrics: paxSpotify.getAllLyrics },
@@ -1375,6 +1396,7 @@ async function buildRegistry(): Promise<ProviderDefinition[]> {
         const status = getSubtitleStatus(ctx.videoId);
         if (status === 'no-captions') return 'no-captions';
         if (status === 'gated') return 'gated';
+        if (status === 'unresolved') return 'unresolved';
         return null;
       } },
     { id: 'youtube-music', name: 'YouTube Music', requiresKey: false, alwaysUnavailable: false, getLyrics: youtubeMusicGet, getAllLyrics: musicAll },
