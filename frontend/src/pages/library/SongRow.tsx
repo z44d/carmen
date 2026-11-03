@@ -119,7 +119,7 @@ export default function SongRow({
   return (
     <div
       className={cn(
-        'flex items-center gap-2 rounded-[28px] pr-2 hover:bg-hover',
+        'flex items-center gap-2 rounded-[12px] pr-2 hover:bg-hover',
         // `action.selected` has no token — 16% of the text colour, as before.
         active && 'bg-[color-mix(in_srgb,var(--app-text)_16%,transparent)]',
       )}
@@ -127,7 +127,7 @@ export default function SongRow({
       <button
         type="button"
         onClick={() => player.playTrack(track, contextTracks)}
-        className="m-0 flex min-w-0 flex-1 cursor-pointer items-center gap-[10px] rounded-[28px] border-0 bg-transparent px-2 py-[6px] text-left text-inherit"
+        className="m-0 flex min-w-0 flex-1 cursor-pointer items-center gap-[10px] rounded-[12px] border-0 bg-transparent px-2 py-[6px] text-left text-inherit"
       >
         <Artwork
           src={track.artwork}

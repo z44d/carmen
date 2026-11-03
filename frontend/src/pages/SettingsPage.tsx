@@ -1,15 +1,4 @@
-import {
-  Button,
-  Chip,
-  Container,
-  Divider,
-  Paper,
-  Switch,
-  TextField,
-  ToggleButton,
-  ToggleButtonGroup,
-  Tooltip,
-} from '../components/ui';
+import { Button, Chip, Switch, TextField, ToggleButton, ToggleButtonGroup } from '../components/ui';
 import type { ReactElement, ReactNode } from 'react';
 import { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
@@ -23,33 +12,172 @@ import { listDownloads } from '../db/repos/downloads';
 import { notify } from '../utils/downloadsStore';
 import { formatBytes } from '../utils/format';
 import { appCacheSize, clearAppCache } from '../utils/streamCache';
-import { LYRICS_PROVIDERS } from '../types/models';
+import { LYRICS_CHAIN } from '../types/models';
+import { isProviderEnabled, normalizeProviderOrder } from '../utils/lyricsProviders';
 import type { ArtworkPlacement, CoverSize, FontId, LyricsSize, ThemeMode } from '../types/models';
 import {
   CheckIcon,
   DarkModeIcon,
   DevicePhoneMobileIcon,
+  DownloadIcon,
+  ExpandLessIcon,
+  ExpandMoreIcon,
   GitHubIcon,
+  InfoIcon,
   LightModeIcon,
+  LyricsIcon,
+  MusicNoteIcon,
+  PlayArrowIcon,
   TelegramIcon,
+  UserIcon,
   XIcon,
 } from '../components/icons';
 
 /** MUI's stock `warning.main` (light/dark) — the low-battery status lines. */
 const WARNING_TEXT = 'text-[#ed6c02] dark:text-[#ff9800]';
 
-/** Titled card grouping one group of settings. */
-function Section({ title, children }: { title: string; children: ReactNode }) {
+/**
+ * Titled section: a glass icon chip and a bold sentence-case heading with
+ * an optional muted subtitle, then one glass card whose rows are split by
+ * hairline dividers. One section per concern, one card per section — the
+ * page reads top to bottom instead of as a stack of loose boxes. The
+ * scroll margin clears the floating header and the sticky section nav
+ * when a nav chip jumps here.
+ */
+function Section({
+  id,
+  icon,
+  title,
+  subtitle,
+  children,
+}: {
+  id: string;
+  icon: ReactNode;
+  title: string;
+  subtitle?: string;
+  children: ReactNode;
+}) {
   return (
-    <div>
-      {/* MUI's `overline` variant: 12px, uppercase, the tall 2.66 line box. */}
-      <span className="ml-1 block text-xs uppercase leading-[2.66] text-muted">
-        {title}
-      </span>
-      <Paper variant="outlined" className="mt-[6px] rounded-[42px] p-4">
+    <section id={id} className="scroll-mt-[calc(var(--app-header)+72px)]">
+      <div className="flex items-center gap-3">
+        <span className="grid size-10 shrink-0 place-items-center rounded-full border border-line bg-surface/60 text-body shadow-glass backdrop-blur-xl">
+          {icon}
+        </span>
+        <div className="min-w-0">
+          <h2 className="m-0 text-[19px] font-bold leading-tight tracking-[-0.01em] md:text-xl">
+            {title}
+          </h2>
+          {subtitle ? (
+            <p className="m-0 mt-0.5 text-[13px] leading-[1.4] text-muted">{subtitle}</p>
+          ) : null}
+        </div>
+      </div>
+      <div className="mt-3 divide-y divide-line overflow-hidden rounded-[20px] border border-line bg-surface/55 shadow-glass backdrop-blur-2xl">
         {children}
-      </Paper>
+      </div>
+    </section>
+  );
+}
+
+/** One toggle row: label and description left, control right, never wrapping orphans. */
+function SettingRow({
+  title,
+  description,
+  status,
+  children,
+}: {
+  title: string;
+  description?: ReactNode;
+  /** Extra status line under the description (battery / low-battery warnings). */
+  status?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="flex flex-row items-center justify-between gap-4 px-4 py-4">
+      <div className="min-w-0">
+        <p className="m-0 text-sm font-semibold leading-[1.43]">{title}</p>
+        {description ? (
+          <span className="block text-xs leading-[1.4] text-muted">{description}</span>
+        ) : null}
+        {status}
+      </div>
+      <div className="shrink-0">{children}</div>
     </div>
+  );
+}
+
+/** One choice block: label row (plus an optional status chip), the segmented control, a hint. */
+function ChoiceBlock({
+  title,
+  chip,
+  hint,
+  children,
+}: {
+  title: string;
+  chip?: ReactNode;
+  hint?: ReactNode;
+  children: ReactNode;
+}) {
+  return (
+    <div className="px-4 py-4">
+      <div className="mb-2.5 flex flex-row items-center justify-between gap-3">
+        <p className="m-0 text-sm font-semibold leading-[1.43]">{title}</p>
+        {chip}
+      </div>
+      {children}
+      {hint ? (
+        <span className="mt-2 block text-xs leading-[1.4] text-muted">{hint}</span>
+      ) : null}
+    </div>
+  );
+}
+
+/** Segmented choice group: wraps to two rows on a phone instead of squeezing its labels. */
+function ChoiceGroup({
+  value,
+  onChange,
+  label,
+  twoCol,
+  children,
+}: {
+  value: unknown;
+  onChange: (event: React.MouseEvent<HTMLButtonElement>, value: unknown) => void;
+  label: string;
+  /** Four short options read better as a 2×2 grid than a squeezed row. */
+  twoCol?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <ToggleButtonGroup
+      exclusive
+      value={value}
+      onChange={onChange}
+      aria-label={label}
+      className={cn('w-full flex-wrap', twoCol && '[&>button]:basis-[calc(50%-2px)]')}
+    >
+      {children}
+    </ToggleButtonGroup>
+  );
+}
+
+/** One segment: wide enough that its label never wraps to two lines. */
+function ChoiceOption({
+  value,
+  disabled,
+  children,
+}: {
+  value: unknown;
+  disabled?: boolean;
+  children: ReactNode;
+}) {
+  return (
+    <ToggleButton
+      value={value}
+      disabled={disabled}
+      className="min-w-[96px] flex-1 whitespace-nowrap px-2 text-[13px]"
+    >
+      {children}
+    </ToggleButton>
   );
 }
 
@@ -68,9 +196,8 @@ interface CreditProps {
  * is only the handle, the icon carries the rest.
  */
 function Credit({ href, name, icon, iconColor, children }: CreditProps) {
-  // The chip used to paint its icon through `sx`; `text.primary` is not a
-  // CSS colour, so those two marks always inherited the chip's own text —
-  // only a real colour (Telegram's teal) ever took.
+  // Icons inherit the chip's own text colour: no brand hues in the
+  // credits row — every mark wears the same neutral chrome.
   const painted = /^(#|rgb|hsl|var\()/i.test(iconColor);
   return (
     <a
@@ -101,19 +228,54 @@ function Credit({ href, name, icon, iconColor, children }: CreditProps) {
 }
 
 /**
- * Theme engine controls: color mode + accent color + interface font.
+ * Sticky section quick-nav: a scrollable row of glass chips under the
+ * title that jumps to each section. It sticks just below the floating
+ * header, so jumping around a long page never means scrolling back to
+ * the top first. No scroll-spy: the chips are plain jump links, and the
+ * sections' scroll margin keeps their headings clear of the nav itself.
+ */
+function SectionNav({ items }: { items: { id: string; label: string }[] }) {
+  return (
+    <nav
+      aria-label="Settings sections"
+      className="sticky top-[calc(var(--app-header)+8px)] z-[1000]"
+    >
+      <div className="peek-row flex gap-2 overflow-x-auto py-1">
+        {items.map((item) => (
+          <button
+            key={item.id}
+            type="button"
+            onClick={() =>
+              document.getElementById(item.id)?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+            }
+            className="shrink-0 whitespace-nowrap rounded-full border border-line bg-surface/70 px-4 py-2 text-[13px] font-semibold text-body shadow-glass backdrop-blur-xl transition hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.97]"
+          >
+            {item.label}
+          </button>
+        ))}
+      </div>
+    </nav>
+  );
+}
+
+/**
+ * Settings, reorganised: Appearance, Player, Lyrics, Downloads,
+ * Storage, Server, About, Credits. The accent picker and Adaptive
+ * accent live in Appearance: Neutral is the default, so the site
+ * stays unified and neutral until the user picks a hue or turns
+ * Adaptive accent on.
  *
  * Every persisted choice is written straight through the settings store;
- * the theme context lends its session state (the resolved mode, the color
- * read from the playing cover) and the effective accent / adaptive values,
- * which low battery mode overrides.
+ * the theme context lends the resolved mode for the status chip.
  */
 export default function SettingsPage() {
   const {
     themeMode,
     accent,
     font,
-    lyricsProvider,
+    lyricsProviderOrder,
+    lyricsProvidersEnabled,
+    paxsenixApiKey,
     lyricsSize,
     apiBase,
     lowBatteryMode: lowBatteryManual,
@@ -132,17 +294,8 @@ export default function SettingsPage() {
   // kick-in) and the reading behind its status line.
   const lowBatteryActive = useLowBatteryMode();
   const battery = useBattery();
-  // `adaptiveAccent` and `accentInUse` come from the theme context: they are
-  // the *effective* values, so low battery mode shows through here.
-  const { adaptiveColor, resolved, accentInUse, adaptiveAccent } = useTheme();
+  const { resolved, adaptiveColor, adaptiveAccent } = useTheme();
   const selectedFont = FONTS.find((option) => option.id === font) || FONTS[0];
-
-  // A white accent on the light theme would paint primary labels, borders
-  // and icons white on white — low battery mode pins the accent to
-  // white (and a black cover can make adaptive pick it too), so those few
-  // spots fall back to plain colours while it reads that way. The dark
-  // theme reads white perfectly and keeps them.
-  const whiteOnLight = resolved === 'light' && accentInUse.toLowerCase() === '#ffffff';
 
   // App version + runtime facts (Settings → About). Tauri only — the web
   // build is whatever CI deployed, so there is nothing to version-check.
@@ -196,642 +349,599 @@ export default function SettingsPage() {
   };
 
   return (
-    <Container maxWidth="sm" className="pb-8 pt-4 md:pt-6">
-      <div className="flex flex-col gap-6">
+    <div className="mx-auto w-full max-w-[720px] px-4 pb-10 pt-6 md:px-10 md:pt-8">
+      <div className="flex flex-col gap-7 md:gap-9">
         <div>
-          <h5 className="m-0 text-2xl font-bold">Settings</h5>
+          <h5 className="m-0 text-[26px] font-extrabold leading-tight tracking-[-0.01em]">Settings</h5>
           <p className="m-0 text-sm leading-[1.43] text-muted">
             Personalize Carmen
           </p>
         </div>
 
-        <Section title="Appearance">
-          <div className="flex flex-col gap-4">
-            <div>
-              <div className="mb-2 flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Color mode
-                </p>
-                <Chip
-                  size="small"
-                  label={`Currently ${resolved}`}
-                  variant="outlined"
-                  className={cn(!whiteOnLight && '!border-accent/50 !text-accent')}
-                />
-              </div>
-              <ToggleButtonGroup
-                exclusive
-                value={themeMode}
-                onChange={(_, value) => {
-                  if (value === 'light' || value === 'dark' || value === 'system') {
-                    updateSettings({ themeMode: value satisfies ThemeMode });
-                  }
-                }}
-                aria-label="Color mode"
-                className="w-full"
-              >
-                <ToggleButton value="light" className="flex-1">
-                  <LightModeIcon fontSize="small" sx={{ mr: 0.75 }} /> Light
-                </ToggleButton>
-                <ToggleButton value="dark" className="flex-1">
-                  <DarkModeIcon fontSize="small" sx={{ mr: 0.75 }} /> Dark
-                </ToggleButton>
-                <ToggleButton value="system" className="flex-1">
-                  <DevicePhoneMobileIcon fontSize="small" sx={{ mr: 0.75 }} /> System
-                </ToggleButton>
-              </ToggleButtonGroup>
-              <span className="mt-[6px] block text-xs leading-[1.4] text-muted">
-                System follows your device&apos;s <b>prefers-color-scheme</b> setting live.
-              </span>
-            </div>
+        <SectionNav
+          items={[
+            { id: 'appearance', label: 'Appearance' },
+            { id: 'player', label: 'Player' },
+            { id: 'lyrics', label: 'Lyrics' },
+            { id: 'downloads', label: 'Downloads' },
+            { id: 'storage', label: 'Storage' },
+            { id: 'server', label: 'Server' },
+            ...(isTauri && info ? [{ id: 'about', label: 'About' }] : []),
+            { id: 'credits', label: 'Credits' },
+          ]}
+        />
 
-            <Divider />
-
-            <div>
-              <div className="mb-2 flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Interface font
-                </p>
-                <Chip
-                  size="small"
-                  label={selectedFont.name}
-                  variant="outlined"
-                  className={cn(!whiteOnLight && '!border-accent/50 !text-accent')}
-                />
-              </div>
-              <ToggleButtonGroup
-                exclusive
-                value={font}
-                onChange={(_, value) => {
-                  if (value === 'alexandria' || value === 'cairo' || value === 'system') {
-                    updateSettings({ font: value satisfies FontId });
-                  }
-                }}
-                aria-label="Interface font"
-                className="w-full"
-              >
-                {FONTS.map((option) => (
-                  <ToggleButton key={option.id} value={option.id} className="flex-1">
-                    {option.name}
-                  </ToggleButton>
-                ))}
-              </ToggleButtonGroup>
-              <div
-                className="mt-[10px] rounded-[28px] bg-hover p-3"
-                style={{ fontFamily: fontStack(font) }}
-              >
-                <p className="m-0 truncate font-bold">
-                  Carmen — {selectedFont.name}
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  The quick brown fox jumps over the lazy dog
-                </span>
-                <span
-                  dir="rtl"
-                  className="mt-[2px] block text-xs leading-[1.4] text-muted"
-                >
-                  اسمعني — موسيقى بلا حدود
-                </span>
-              </div>
-              <span className="mt-[6px] block text-xs leading-[1.4] text-muted">
-                Cairo and Alexandria are loaded from Fontsource and only
-                downloaded once you pick them.
-              </span>
-            </div>
-
-            <Divider />
-
-            <div>
-              <div className="mb-2 flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Accent color
-                </p>
-                <span className="font-mono text-xs leading-[1.4] text-muted">
-                  {accent.toUpperCase()}
-                </span>
-              </div>
-              <div
-                role="radiogroup"
-                aria-label="Accent color"
-                className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-2"
-              >
-                {ACCENTS.map((option) => {
-                  const selected = accent.toLowerCase() === option.color.toLowerCase();
-                  return (
-                    <Tooltip title={option.name} key={option.id}>
-                      <button
-                        type="button"
-                        role="radio"
-                        aria-checked={selected}
-                        aria-label={option.name}
-                        onClick={() => updateSettings({ accent: option.color })}
-                        className={cn(
-                          'grid aspect-square w-full cursor-pointer place-items-center rounded-full p-0',
-                          'transition-transform duration-150 hover:scale-[1.08]',
-                          selected ? 'border-[3px]' : 'border-2',
-                          selected
-                            ? 'border-body'
-                            : // white on white paper needs an edge to be seen
-                              option.color.toLowerCase() === '#ffffff'
-                              ? 'border-line'
-                              : 'border-transparent',
-                          // a white swatch would hide a white checkmark
-                          option.color.toLowerCase() === '#ffffff' ? 'text-[#12160f]' : 'text-white',
-                        )}
-                        style={{ backgroundColor: option.color }}
-                      >
-                        {selected && <CheckIcon sx={{ fontSize: 18 }} />}
-                      </button>
-                    </Tooltip>
-                  );
-                })}
-              </div>
-              <span className="mt-2 block text-xs leading-[1.4] text-muted">
-                Defaults to Material Green ({DEFAULT_ACCENT}).
-                {lowBatteryActive && ' Low battery mode overrides it with white while it is on.'}
-              </span>
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Adaptive accent color
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  The accent follows the cover of the song that is playing —
-                  the most used color of the artwork, or white when the cover
-                  is black. Your chosen accent is used while nothing plays.
-                </span>
-                {lowBatteryActive && (
-                  <span className="block text-xs leading-[1.4] text-muted">
-                    Paused while low battery mode is on — your choice is
-                    kept and returns when you turn it off.
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={adaptiveAccent}
-                disabled={lowBatteryActive}
-                onChange={(_, checked) => updateSettings({ adaptiveAccent: checked })}
-                inputProps={{ 'aria-label': 'Adaptive accent color' }}
-                className="shrink-0"
+        <Section
+          id="appearance"
+          icon={<DarkModeIcon fontSize="small" />}
+          title="Appearance"
+          subtitle="Look and feel"
+        >
+          <ChoiceBlock
+            title="Color mode"
+            chip={
+              <Chip
+                size="small"
+                label={`Currently ${resolved}`}
+                variant="outlined"
+                className="!border-accent/50 !text-accent-fg"
               />
+            }
+            hint={
+              <>
+                System follows your device setting live.
+              </>
+            }
+          >
+            <ChoiceGroup
+              value={themeMode}
+              onChange={(_, value) => {
+                if (value === 'light' || value === 'dark' || value === 'system') {
+                  updateSettings({ themeMode: value satisfies ThemeMode });
+                }
+              }}
+              label="Color mode"
+            >
+              <ChoiceOption value="light">
+                <LightModeIcon fontSize="small" sx={{ mr: 0.75 }} /> Light
+              </ChoiceOption>
+              <ChoiceOption value="dark">
+                <DarkModeIcon fontSize="small" sx={{ mr: 0.75 }} /> Dark
+              </ChoiceOption>
+              <ChoiceOption value="system">
+                <DevicePhoneMobileIcon fontSize="small" sx={{ mr: 0.75 }} /> System
+              </ChoiceOption>
+            </ChoiceGroup>
+          </ChoiceBlock>
+
+          <ChoiceBlock
+            title="Interface font"
+            chip={
+              <Chip
+                size="small"
+                label={selectedFont.name}
+                variant="outlined"
+                className="!border-accent/50 !text-accent-fg"
+              />
+            }
+            hint="Cairo and Alexandria download once, when you pick them."
+          >
+            <ChoiceGroup
+              value={font}
+              onChange={(_, value) => {
+                if (value === 'alexandria' || value === 'cairo' || value === 'system') {
+                  updateSettings({ font: value satisfies FontId });
+                }
+              }}
+              label="Interface font"
+            >
+              {FONTS.map((option) => (
+                <ChoiceOption key={option.id} value={option.id}>
+                  {option.name}
+                </ChoiceOption>
+              ))}
+            </ChoiceGroup>
+            <div
+              className="mt-2.5 rounded-[12px] bg-hover p-3"
+              style={{ fontFamily: fontStack(font) }}
+            >
+              <p className="m-0 truncate font-bold">
+                Carmen — {selectedFont.name}
+              </p>
+              <span className="block text-xs leading-[1.4] text-muted">
+                The quick brown fox jumps over the lazy dog
+              </span>
+              <span
+                dir="rtl"
+                className="mt-[2px] block text-xs leading-[1.4] text-muted"
+              >
+                اسمعني — موسيقى بلا حدود
+              </span>
             </div>
+          </ChoiceBlock>
 
-            {adaptiveAccent && adaptiveColor && (
-              <div className="-mt-[2px] flex flex-row items-center gap-2">
-                <div
-                  className="h-[14px] w-[14px] shrink-0 rounded-full border border-line"
-                  style={{ backgroundColor: adaptiveColor }}
-                />
-                <span className="font-mono text-xs leading-[1.4] text-muted">
-                  {adaptiveColor} — read from the cover of the playing song
-                </span>
-              </div>
-            )}
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Low battery mode
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Saves power by disabling artwork theming, blur and ambient
-                  effects — the accent turns white.
-                </span>
-                {battery.level !== null && (
-                  <span
+          <ChoiceBlock
+            title="Accent color"
+            chip={
+              <span className="font-mono text-xs leading-[1.4] text-muted">
+                {accent.toUpperCase()}
+              </span>
+            }
+            hint={
+              <>
+                Defaults to Neutral ({DEFAULT_ACCENT}).
+                {lowBatteryActive &&
+                  ' Low battery mode overrides it with white while it is on.'}
+              </>
+            }
+          >
+            <div
+              role="radiogroup"
+              aria-label="Accent color"
+              className="grid grid-cols-[repeat(auto-fill,minmax(44px,1fr))] gap-2"
+            >
+              {ACCENTS.map((option) => {
+                const selected = accent.toLowerCase() === option.color.toLowerCase();
+                const lightSwatch = ['#ffffff', '#fafafa'].includes(option.color.toLowerCase());
+                return (
+                  <button
+                    key={option.id}
+                    type="button"
+                    role="radio"
+                    aria-checked={selected}
+                    aria-label={option.name}
+                    title={option.name}
+                    onClick={() => updateSettings({ accent: option.color })}
                     className={cn(
-                      'block text-xs leading-[1.4]',
-                      lowBatteryActive && !lowBatteryManual ? WARNING_TEXT : 'text-muted',
+                      'grid aspect-square w-full cursor-pointer place-items-center rounded-full p-0',
+                      'transition-transform duration-150 hover:scale-[1.08]',
+                      selected ? 'border-[3px]' : 'border-2',
+                      selected
+                        ? 'border-body'
+                        : // a near-white swatch needs an edge to be seen
+                          lightSwatch
+                          ? 'border-line'
+                          : 'border-transparent',
+                      // a light swatch would hide a white checkmark
+                      lightSwatch ? 'text-[#12160f]' : 'text-white',
                     )}
+                    style={{ backgroundColor: option.color }}
                   >
-                    {lowBatteryActive && !lowBatteryManual
-                      ? `On automatically — battery at ${Math.round(battery.level * 100)}%.`
-                      : `Battery at ${Math.round(battery.level * 100)}%${
-                          battery.charging ? ', charging' : ''
-                        } — turns itself on below 20% while on battery.`}
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={lowBatteryManual}
-                onChange={(_, checked) => updateSettings({ lowBatteryMode: checked })}
-                inputProps={{ 'aria-label': 'Low battery mode' }}
-                className="shrink-0"
-              />
+                    {selected && <CheckIcon sx={{ fontSize: 18 }} />}
+                  </button>
+                );
+              })}
             </div>
+          </ChoiceBlock>
 
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Animated artwork
-                </p>
+          <SettingRow
+            title="Adaptive accent color"
+            description="The accent follows the cover of the playing song — its most used color, or white when the cover is black. Your chosen accent is used while nothing plays."
+            status={
+              lowBatteryActive ? (
                 <span className="block text-xs leading-[1.4] text-muted">
-                  Album covers that move in the Now Playing screen, fetched
-                  from Apple's iTunes catalogue — the whole card on
-                  desktop, the lyrics page on a phone. Downloads keep a
-                  copy for offline playback.
+                  Paused while low battery mode is on — your choice is kept and returns when you
+                  turn it off.
                 </span>
-                {animatedArtwork && lowBatteryActive && (
-                  <span className={cn('block text-xs leading-[1.4]', WARNING_TEXT)}>
-                    Off automatically — low battery mode is on.
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={animatedArtwork}
-                onChange={(_, checked) => updateSettings({ animatedArtwork: checked })}
-                inputProps={{ 'aria-label': 'Animated artwork' }}
-                className="shrink-0"
-              />
-            </div>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={adaptiveAccent}
+              disabled={lowBatteryActive}
+              onChange={(_, checked) => updateSettings({ adaptiveAccent: checked })}
+              inputProps={{ 'aria-label': 'Adaptive accent color' }}
+              className="shrink-0"
+            />
+          </SettingRow>
 
-            <Divider />
-
-            <div>
-              <p className="m-0 mb-2 text-sm leading-[1.43] font-semibold">
-                Animated artwork placement
-              </p>
-              <ToggleButtonGroup
-                exclusive
-                value={animatedArtworkPlacement}
-                onChange={(_, value) => {
-                  if (
-                    value === 'default' ||
-                    value === 'lyrics' ||
-                    value === 'player' ||
-                    value === 'thumbnail'
-                  ) {
-                    updateSettings({
-                      animatedArtworkPlacement: value satisfies ArtworkPlacement,
-                    });
-                  }
-                }}
-                aria-label="Animated artwork placement"
-                className="w-full"
-              >
-                <ToggleButton disabled={!animatedArtwork} value="default" className="flex-1">
-                  Default
-                </ToggleButton>
-                <ToggleButton disabled={!animatedArtwork} value="lyrics" className="flex-1">
-                  Lyrics bg
-                </ToggleButton>
-                <ToggleButton disabled={!animatedArtwork} value="player" className="flex-1">
-                  Player bg
-                </ToggleButton>
-                <ToggleButton disabled={!animatedArtwork} value="thumbnail" className="flex-1">
-                  Cover
-                </ToggleButton>
-              </ToggleButtonGroup>
-              <span className="mt-[6px] block text-xs leading-[1.4] text-muted">
-                <b>Default</b> follows the device — the whole player card on
-                desktop, the lyrics background on a phone. <b>Lyrics bg</b> and{' '}
-                <b>Player bg</b> pin one surface on every device;{' '}
-                <b>Cover</b> animates the album thumbnail instead.
-              </span>
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Blur effects
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Glass backdrops, accent glows and the ambient wash — off
-                  gives flat, lighter surfaces.
-                </span>
-                {lowBatteryActive && !blurEffects && (
-                  <span className="block text-xs leading-[1.4] text-muted">
-                    Low battery mode is on as well — both choices are
-                    respected when it leaves.
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={blurEffects}
-                onChange={(_, checked) => updateSettings({ blurEffects: checked })}
-                inputProps={{ 'aria-label': 'Blur effects' }}
-                className="shrink-0"
-              />
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Artwork background
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Wash the app background with the colors of the artwork that
-                  is playing. Off keeps the plain theme background.
-                </span>
-                {artworkBackground && lowBatteryActive && (
-                  <span className={cn('block text-xs leading-[1.4]', WARNING_TEXT)}>
-                    Hidden automatically — low battery mode is on.
-                  </span>
-                )}
-              </div>
-              <Switch
-                checked={artworkBackground}
-                onChange={(_, checked) => updateSettings({ artworkBackground: checked })}
-                inputProps={{ 'aria-label': 'Artwork background' }}
-                className="shrink-0"
-              />
-            </div>
-
-            <Divider />
-
-            <div>
-              <p className="m-0 mb-2 text-sm leading-[1.43] font-semibold">
-                Player cover size
-              </p>
-              <ToggleButtonGroup
-                exclusive
-                value={coverSize}
-                onChange={(_, value) => {
-                  if (value === 'default' || value === 'large' || value === 'veryLarge') {
-                    updateSettings({ coverSize: value satisfies CoverSize });
-                  }
-                }}
-                aria-label="Player cover size"
-                className="w-full"
-              >
-                <ToggleButton value="default" className="flex-1">
-                  Default
-                </ToggleButton>
-                <ToggleButton value="large" className="flex-1">
-                  Large
-                </ToggleButton>
-                <ToggleButton value="veryLarge" className="flex-1">
-                  Very large
-                </ToggleButton>
-              </ToggleButtonGroup>
-              <span className="mt-[6px] block text-xs leading-[1.4] text-muted">
-                Width of the album cover inside the Now Playing card.
-              </span>
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Cinematic mode
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Desktop full screen drops every button, the scrubber and
-                  the tab strip — only the cover, the song details and the
-                  lyrics remain, over the artwork backdrop. Press Esc to
-                  leave.
-                </span>
-              </div>
-              <Switch
-                checked={cinematicMode}
-                onChange={(_, checked) => updateSettings({ cinematicMode: checked })}
-                inputProps={{ 'aria-label': 'Cinematic mode' }}
-                className="shrink-0"
-              />
-            </div>
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Cover in cinematic mode
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Keeps the album cover on the left. Turn it off for the
-                  details and the lyrics to take the full width.
-                </span>
-              </div>
-              <Switch
-                checked={cinematicCover}
-                disabled={!cinematicMode}
-                onChange={(_, checked) => updateSettings({ cinematicCover: checked })}
-                inputProps={{ 'aria-label': 'Cover in cinematic mode' }}
-                className="shrink-0"
-              />
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Lock screen lyrics
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Mirrors the currently sung line onto the lock screen,
-                  Control Center and car displays — the track title stays
-                  where it belongs. Updates only when the line changes,
-                  never while it is being sung.
-                </span>
-              </div>
-              <Switch
-                checked={lockScreenLyrics}
-                onChange={(_, checked) => updateSettings({ lockScreenLyrics: checked })}
-                inputProps={{ 'aria-label': 'Lock screen lyrics' }}
-                className="shrink-0"
-              />
-            </div>
-
-            <div className="flex items-center gap-3 rounded-[28px] bg-hover p-3">
+          {adaptiveAccent && adaptiveColor && (
+            <div className="flex flex-row items-center gap-2 px-4 py-4">
               <div
-                className={cn(
-                  'h-9 w-9 rounded-full bg-accent',
-                  // a white accent needs an edge to be seen on this row
-                  whiteOnLight && 'border border-line',
-                )}
+                className="h-[14px] w-[14px] shrink-0 rounded-full border border-line"
+                style={{ backgroundColor: adaptiveColor }}
               />
-              <div>
-                <p
+              <span className="font-mono text-xs leading-[1.4] text-muted">
+                {adaptiveColor} — read from the cover of the playing song
+              </span>
+            </div>
+          )}
+
+          <SettingRow
+            title="Blur effects"
+            description="Glass backdrops and the ambient wash."
+            status={
+              lowBatteryActive && !blurEffects ? (
+                <span className="block text-xs leading-[1.4] text-muted">
+                  Low battery mode is on as well — both choices are respected when it leaves.
+                </span>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={blurEffects}
+              onChange={(_, checked) => updateSettings({ blurEffects: checked })}
+              inputProps={{ 'aria-label': 'Blur effects' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Artwork background"
+            description="Tint the background with the colors of the playing artwork."
+            status={
+              artworkBackground && lowBatteryActive ? (
+                <span className={cn('block text-xs leading-[1.4]', WARNING_TEXT)}>
+                  Hidden automatically — low battery mode is on.
+                </span>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={artworkBackground}
+              onChange={(_, checked) => updateSettings({ artworkBackground: checked })}
+              inputProps={{ 'aria-label': 'Artwork background' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Low battery mode"
+            description="Save power: turns off artwork theming, blur and ambient effects."
+            status={
+              battery.level !== null ? (
+                <span
                   className={cn(
-                    'm-0 text-sm leading-[1.43] font-semibold',
-                    whiteOnLight ? 'text-body' : 'text-accent',
+                    'block text-xs leading-[1.4]',
+                    lowBatteryActive && !lowBatteryManual ? WARNING_TEXT : 'text-muted',
                   )}
                 >
-                  Primary accent preview
-                </p>
-                <span className="text-xs leading-[1.4] text-muted">
-                  Buttons, active lines and highlights use this color
+                  {lowBatteryActive && !lowBatteryManual
+                    ? `On automatically — battery at ${Math.round(battery.level * 100)}%.`
+                    : `Battery at ${Math.round(battery.level * 100)}%${
+                        battery.charging ? ', charging' : ''
+                      } — turns itself on below 20% while on battery.`}
                 </span>
-              </div>
-            </div>
-          </div>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={lowBatteryManual}
+              onChange={(_, checked) => updateSettings({ lowBatteryMode: checked })}
+              inputProps={{ 'aria-label': 'Low battery mode' }}
+              className="shrink-0"
+            />
+          </SettingRow>
         </Section>
 
-        <Section title="Lyrics">
-          <div className="flex flex-col gap-4">
-            <div>
-              <p className="m-0 mb-2 text-sm leading-[1.43] font-semibold">
-                Lyrics size
-              </p>
-              <ToggleButtonGroup
-                exclusive
-                value={lyricsSize}
-                onChange={(_, value) => {
-                  if (value === 'default' || value === 'large' || value === 'veryLarge') {
-                    updateSettings({ lyricsSize: value satisfies LyricsSize });
-                  }
-                }}
-                aria-label="Lyrics size"
-                className="w-full"
-              >
-                <ToggleButton value="default" className="flex-1">
-                  Default
-                </ToggleButton>
-                <ToggleButton value="large" className="flex-1">
-                  Large
-                </ToggleButton>
-                <ToggleButton value="veryLarge" className="flex-1">
-                  Very large
-                </ToggleButton>
-              </ToggleButtonGroup>
-              <span className="mt-[6px] block text-xs leading-[1.4] text-muted">
-                Text size of the lyrics inside the Now Playing card.
-              </span>
-            </div>
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Word-by-word karaoke
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Inside the active line, each word lights up as it is sung —
-                  the line's duration spread evenly over its words when the
-                  source carries no per-word stamps.
+        <Section
+          id="player"
+          icon={<PlayArrowIcon fontSize="small" />}
+          title="Player"
+          subtitle="Now Playing, artwork and the lock screen"
+        >
+          <SettingRow
+            title="Animated artwork"
+            description="Moving album covers in Now Playing, fetched from Apple's iTunes catalogue."
+            status={
+              animatedArtwork && lowBatteryActive ? (
+                <span className={cn('block text-xs leading-[1.4]', WARNING_TEXT)}>
+                  Off automatically — low battery mode is on.
                 </span>
-              </div>
-              <Switch
-                checked={karaokeWords}
-                onChange={(_, checked) => updateSettings({ karaokeWords: checked })}
-                inputProps={{ 'aria-label': 'Word-by-word karaoke' }}
-                className="shrink-0"
-              />
-            </div>
+              ) : undefined
+            }
+          >
+            <Switch
+              checked={animatedArtwork}
+              onChange={(_, checked) => updateSettings({ animatedArtwork: checked })}
+              inputProps={{ 'aria-label': 'Animated artwork' }}
+              className="shrink-0"
+            />
+          </SettingRow>
 
+          <ChoiceBlock
+            title="Animated artwork placement"
+            hint={
+              <>
+                Default follows the device. Lyrics bg and Player bg pin one surface;
+                Cover animates the thumbnail.
+              </>
+            }
+          >
+            <ChoiceGroup
+              value={animatedArtworkPlacement}
+              twoCol
+              onChange={(_, value) => {
+                if (
+                  value === 'default' ||
+                  value === 'lyrics' ||
+                  value === 'player' ||
+                  value === 'thumbnail'
+                ) {
+                  updateSettings({
+                    animatedArtworkPlacement: value satisfies ArtworkPlacement,
+                  });
+                }
+              }}
+              label="Animated artwork placement"
+            >
+              <ChoiceOption disabled={!animatedArtwork} value="default">
+                Default
+              </ChoiceOption>
+              <ChoiceOption disabled={!animatedArtwork} value="lyrics">
+                Lyrics bg
+              </ChoiceOption>
+              <ChoiceOption disabled={!animatedArtwork} value="player">
+                Player bg
+              </ChoiceOption>
+              <ChoiceOption disabled={!animatedArtwork} value="thumbnail">
+                Cover
+              </ChoiceOption>
+            </ChoiceGroup>
+          </ChoiceBlock>
+
+          <ChoiceBlock
+            title="Player cover size"
+            hint="Width of the album cover inside the Now Playing card."
+          >
+            <ChoiceGroup
+              value={coverSize}
+              onChange={(_, value) => {
+                if (value === 'default' || value === 'large' || value === 'veryLarge') {
+                  updateSettings({ coverSize: value satisfies CoverSize });
+                }
+              }}
+              label="Player cover size"
+            >
+              <ChoiceOption value="default">Default</ChoiceOption>
+              <ChoiceOption value="large">Large</ChoiceOption>
+              <ChoiceOption value="veryLarge">Very large</ChoiceOption>
+            </ChoiceGroup>
+          </ChoiceBlock>
+
+          <SettingRow
+            title="Cinematic mode"
+            description="Full screen on desktop: only cover, details and lyrics. Press Esc to leave."
+          >
+            <Switch
+              checked={cinematicMode}
+              onChange={(_, checked) => updateSettings({ cinematicMode: checked })}
+              inputProps={{ 'aria-label': 'Cinematic mode' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Cover in cinematic mode"
+            description="Keep the cover on the left in cinematic mode."
+          >
+            <Switch
+              checked={cinematicCover}
+              disabled={!cinematicMode}
+              onChange={(_, checked) => updateSettings({ cinematicCover: checked })}
+              inputProps={{ 'aria-label': 'Cover in cinematic mode' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          <SettingRow
+            title="Lock screen lyrics"
+            description="Show the sung line on your lock screen and car display."
+          >
+            <Switch
+              checked={lockScreenLyrics}
+              onChange={(_, checked) => updateSettings({ lockScreenLyrics: checked })}
+              inputProps={{ 'aria-label': 'Lock screen lyrics' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+        </Section>
+
+        <Section
+          id="lyrics"
+          icon={<LyricsIcon fontSize="small" />}
+          title="Lyrics"
+          subtitle="Words on screen"
+        >
+          <ChoiceBlock
+            title="Lyrics size"
+            hint="Text size of the lyrics inside the Now Playing card."
+          >
+            <ChoiceGroup
+              value={lyricsSize}
+              onChange={(_, value) => {
+                if (value === 'default' || value === 'large' || value === 'veryLarge') {
+                  updateSettings({ lyricsSize: value satisfies LyricsSize });
+                }
+              }}
+              label="Lyrics size"
+            >
+              <ChoiceOption value="default">Default</ChoiceOption>
+              <ChoiceOption value="large">Large</ChoiceOption>
+              <ChoiceOption value="veryLarge">Very large</ChoiceOption>
+            </ChoiceGroup>
+          </ChoiceBlock>
+
+          <SettingRow
+            title="Word-by-word karaoke"
+            description="Highlight each word as it is sung."
+          >
+            <Switch
+              checked={karaokeWords}
+              onChange={(_, checked) => updateSettings({ karaokeWords: checked })}
+              inputProps={{ 'aria-label': 'Word-by-word karaoke' }}
+              className="shrink-0"
+            />
+          </SettingRow>
+
+          <div className="px-4 py-4">
+            <p className="m-0 mb-2 text-sm font-semibold leading-[1.43]">
+              Lyrics providers
+            </p>
+            <p className="m-0 mb-3 text-xs leading-[1.4] text-muted">
+              The order is the preference order — the first enabled provider wins
+              ties, and the best-quality result across enabled providers is used.
+            </p>
             <div className="flex flex-col gap-1">
-            {LYRICS_PROVIDERS.map((provider) => {
-              const selected = lyricsProvider === provider.id;
-              return (
-                <button
-                  key={provider.id}
-                  type="button"
-                  onClick={() => updateSettings({ lyricsProvider: provider.id })}
-                  aria-pressed={selected}
-                  className={cn(
-                    'flex w-full cursor-pointer items-center justify-between gap-3',
-                    'rounded-[28px] border-0 px-[10px] py-[6px] text-left text-body hover:bg-hover',
-                    selected && 'bg-[rgba(0,0,0,0.08)] dark:bg-[rgba(255,255,255,0.12)]',
-                  )}
-                >
-                  <div className="min-w-0">
-                    <p className="m-0 text-sm leading-[1.43] font-semibold">
+              {normalizeProviderOrder(lyricsProviderOrder).map((providerId, index, order) => {
+                const provider = LYRICS_CHAIN.find((entry) => entry.id === providerId) ?? {
+                  id: providerId,
+                  label: providerId,
+                };
+                const enabled = isProviderEnabled(lyricsProvidersEnabled, providerId);
+                const move = (delta: -1 | 1) => {
+                  const next = [...order];
+                  const target = index + delta;
+                  if (target < 0 || target >= next.length) return;
+                  [next[index], next[target]] = [next[target], next[index]];
+                  updateSettings({ lyricsProviderOrder: next });
+                };
+                return (
+                  <div
+                    key={provider.id}
+                    className="flex w-full items-center gap-2 rounded-[12px] px-[10px] py-[6px] hover:bg-hover"
+                  >
+                    <span className="w-5 shrink-0 text-center text-xs font-semibold leading-[1.4] text-muted">
+                      {index + 1}
+                    </span>
+                    <p className="m-0 min-w-0 flex-1 text-sm font-semibold leading-[1.43]">
                       {provider.label}
                     </p>
-                    {provider.id === 'auto' && (
-                      <span className="block text-xs leading-[1.4] text-muted">
-                        YouTube first, then the best public source
-                      </span>
-                    )}
+                    <button
+                      type="button"
+                      aria-label={`Move ${provider.label} up`}
+                      disabled={index === 0}
+                      onClick={() => move(-1)}
+                      className="grid size-8 shrink-0 place-items-center rounded-full text-body transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94] disabled:opacity-30"
+                    >
+                      <ExpandLessIcon />
+                    </button>
+                    <button
+                      type="button"
+                      aria-label={`Move ${provider.label} down`}
+                      disabled={index === order.length - 1}
+                      onClick={() => move(1)}
+                      className="grid size-8 shrink-0 place-items-center rounded-full text-body transition-colors hover:bg-hover focus-visible:outline-2 focus-visible:outline-accent active:scale-[0.94] disabled:opacity-30"
+                    >
+                      <ExpandMoreIcon />
+                    </button>
+                    <Switch
+                      checked={enabled}
+                      onChange={(_, checked) =>
+                        updateSettings({
+                          lyricsProvidersEnabled: { ...lyricsProvidersEnabled, [providerId]: checked },
+                        })
+                      }
+                      inputProps={{ 'aria-label': `Enable ${provider.label}` }}
+                      className="shrink-0"
+                    />
                   </div>
-                  {selected && <CheckIcon color={whiteOnLight ? 'action' : 'primary'} sx={{ fontSize: 18 }} />}
-                </button>
-              );
-            })}
+                );
+              })}
             </div>
+          </div>
+
+          <div className="px-4 py-4">
+            <p className="m-0 mb-2 text-sm font-semibold leading-[1.43]">
+              Paxsenix API key
+            </p>
+            <p className="m-0 mb-3 text-xs leading-[1.4] text-muted">
+              Required for the three Paxsenix providers above — without it they
+              are skipped. The key is sent with lyrics requests only, and is
+              never shown anywhere else.
+            </p>
+            <TextField
+              type="password"
+              label={paxsenixApiKey ? 'Paxsenix API key configured' : 'Paxsenix API key'}
+              value={paxsenixApiKey}
+              onChange={(event) => updateSettings({ paxsenixApiKey: event.target.value })}
+              inputProps={{ 'aria-label': 'Paxsenix API key', autoComplete: 'off' }}
+              fullWidth
+            />
+            <span className="mt-1 block text-xs leading-[1.4] text-muted">
+              {paxsenixApiKey ? 'A key is saved.' : 'No key set.'}
+            </span>
           </div>
         </Section>
 
-        <Section title="Downloads">
-          <div className="flex flex-col gap-1">
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">
-                  Smart downloads
-                </p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  Once you have listened to half of a song, it is saved to this
-                  device automatically, so it keeps playing offline. Songs
-                  already on the device are skipped.
-                </span>
-              </div>
-              <Switch
-                checked={smartDownload}
-                onChange={(_, checked) => updateSettings({ smartDownload: checked })}
-                inputProps={{ 'aria-label': 'Smart downloads' }}
-                className="shrink-0"
-              />
-            </div>
+        <Section
+          id="downloads"
+          icon={<DownloadIcon fontSize="small" />}
+          title="Downloads"
+          subtitle="Offline listening"
+        >
+          <SettingRow
+            title="Smart downloads"
+            description="Save a song offline automatically after you have listened to half of it."
+          >
+            <Switch
+              checked={smartDownload}
+              onChange={(_, checked) => updateSettings({ smartDownload: checked })}
+              inputProps={{ 'aria-label': 'Smart downloads' }}
+              className="shrink-0"
+            />
+          </SettingRow>
 
-            <p className="m-0 pt-2 text-sm leading-[1.43]">
-              Every <b>Download</b> runs entirely in your browser: the audio is fetched from the
-              server buffer, converted to MP3 with ffmpeg.wasm and tagged with the title, artists,
-              album, year, genre, cover art and the lyrics — synced lyrics are written as LRC
-              timestamps — before being saved.
+          <div className="px-4 py-4">
+            <p className="m-0 text-sm leading-[1.43]">
+              Downloads run entirely in your browser: audio is converted to MP3, tagged
+              and saved with cover art and lyrics.
             </p>
-            <span className="text-xs leading-[1.4] text-muted">
+            <span className="mt-1 block text-xs leading-[1.4] text-muted">
               Songs longer than 1 hour are not offered by the API.
             </span>
           </div>
         </Section>
 
-        <Section title="Storage">
-          <div className="flex flex-col gap-1">
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">Cached streams</p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  {isTauri
-                    ? 'Songs played from the network are parked in the app cache, so replaying them needs no network. Copies older than a week are dropped automatically.'
-                    : 'Covers kept by the browser cache; streamed audio itself lives in the browser’s HTTP cache.'}
-                </span>
-              </div>
-              <div className="flex shrink-0 flex-row items-center gap-2">
-                <span className="text-sm font-semibold tabular-nums text-muted">
-                  {storage ? formatBytes(storage.cache) : '…'}
-                </span>
-                <Button color="error" className="shrink-0" onClick={() => void clearCache()}>
-                  Clear
-                </Button>
-              </div>
-            </div>
-
-            <Divider />
-
-            <div className="flex flex-row items-center justify-between gap-4">
-              <div className="min-w-0">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">Downloaded songs</p>
-                <span className="block text-xs leading-[1.4] text-muted">
-                  {storage
-                    ? `${storage.count} song${storage.count === 1 ? '' : 's'} · ${formatBytes(
-                        storage.bytes,
-                      )} on this device`
-                    : '…'}
-                </span>
-              </div>
-              <Button className="shrink-0" onClick={() => navigate('/settings/downloads')}>
-                Manage
+        <Section
+          id="storage"
+          icon={<DevicePhoneMobileIcon fontSize="small" />}
+          title="Storage"
+          subtitle="Space on this device"
+        >
+          <SettingRow
+            title="Cached streams"
+            description={
+              isTauri
+                ? 'Played songs are cached for replay without network. Copies older than a week are dropped.'
+                : 'Covers kept by the browser cache; streamed audio itself lives in the browser’s HTTP cache.'
+            }
+          >
+            <div className="flex shrink-0 flex-row items-center gap-2">
+              <span className="text-sm font-semibold tabular-nums text-muted">
+                {storage ? formatBytes(storage.cache) : '…'}
+              </span>
+              <Button color="error" className="shrink-0" onClick={() => void clearCache()}>
+                Clear
               </Button>
             </div>
-          </div>
+          </SettingRow>
+
+          <SettingRow
+            title="Downloaded songs"
+            description={
+              storage
+                ? `${storage.count} song${storage.count === 1 ? '' : 's'} · ${formatBytes(
+                    storage.bytes,
+                  )} on this device`
+                : '…'
+            }
+          >
+            <Button className="shrink-0" onClick={() => navigate('/settings/downloads')}>
+              Manage
+            </Button>
+          </SettingRow>
         </Section>
 
-        <Section title="Server">
-          <div className="flex flex-col gap-2">
-            <p className="m-0 text-sm leading-[1.43]">
-              Optional override of the backend URL — leave the field empty to use the bundled
-              default.
+        <Section
+          id="server"
+          icon={<MusicNoteIcon fontSize="small" />}
+          title="Server"
+          subtitle="Where Carmen gets its music"
+        >
+          <div className="px-4 py-4">
+            <p className="m-0 mb-2.5 text-sm leading-[1.43]">
+              Optional backend URL override. Leave empty to use the bundled default.
             </p>
             <TextField
               fullWidth
@@ -845,28 +955,36 @@ export default function SettingsPage() {
         </Section>
 
         {isTauri && info ? (
-          <Section title="About">
-            <div className="flex flex-col gap-2">
-              <div className="flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">Version</p>
-                <Chip size="small" label={`v${info.version}`} variant="outlined" />
-              </div>
-              <div className="flex flex-row items-center justify-between">
-                <p className="m-0 text-sm leading-[1.43] font-semibold">Platform</p>
-                <Chip
-                  size="small"
-                  label={`${info.platform} · ${info.arch}`}
-                  variant="outlined"
-                />
-              </div>
+          <Section
+            id="about"
+            icon={<InfoIcon fontSize="small" />}
+            title="About"
+            subtitle="This build"
+          >
+            <div className="flex flex-row items-center justify-between gap-4 px-4 py-4">
+              <p className="m-0 text-sm font-semibold leading-[1.43]">Version</p>
+              <Chip size="small" label={`v${info.version}`} variant="outlined" />
+            </div>
+            <div className="flex flex-row items-center justify-between gap-4 px-4 py-4">
+              <p className="m-0 text-sm font-semibold leading-[1.43]">Platform</p>
+              <Chip
+                size="small"
+                label={`${info.platform} · ${info.arch}`}
+                variant="outlined"
+              />
             </div>
           </Section>
         ) : null}
 
-        <Section title="Credits">
-          <div className="flex flex-col gap-[10px]">
+        <Section
+          id="credits"
+          icon={<UserIcon fontSize="small" />}
+          title="Credits"
+          subtitle="The people behind Carmen"
+        >
+          <div className="flex flex-col gap-2.5 px-4 py-4">
             <div>
-              <p className="m-0 text-sm leading-[1.43] font-bold">
+              <p className="m-0 text-sm font-bold leading-[1.43]">
                 Zaid Ballour
               </p>
               <span className="text-xs leading-[1.4] text-muted">
@@ -894,7 +1012,7 @@ export default function SettingsPage() {
                 href="https://t.me/zaidballour"
                 name="Telegram"
                 icon={<TelegramIcon fontSize="inherit" />}
-                iconColor="#229ED9"
+                iconColor="text.primary"
               >
                 @zaidballour
               </Credit>
@@ -902,6 +1020,6 @@ export default function SettingsPage() {
           </div>
         </Section>
       </div>
-    </Container>
+    </div>
   );
 }

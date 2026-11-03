@@ -2,7 +2,6 @@ import { Fab, IconButton, Spinner } from '../components/ui';
 
 import { usePlayer } from '../player/PlayerContext';
 import { useEffectsEnabled } from '../settings/store';
-import { alpha } from '../utils/color';
 import { cn } from '../utils/cn';
 import {
   PauseIcon,
@@ -17,22 +16,25 @@ import {
 /**
  * Transport row: shuffle · previous · play/pause · next · repeat.
  *
- * Shuffle and repeat fill with a tint of the accent when they are on, the
- * play button is a round, softly glowing FAB, and it swaps to a spinner
- * whenever the element is buffering — a stall never looks like a frozen
- * pause button.
+ * iPhone Music language: the transport is monochrome — shuffle/previous/
+ * next/repeat in the body colour, and the play button is a large circle
+ * filled with the body colour (white on dark, near-black on light) with a
+ * contrasting icon and a soft neutral shadow. Shuffle and repeat keep
+ * their accent tint while on, so the Settings accent still reads. The
+ * button swaps to a spinner whenever the element is buffering — a stall
+ * never looks like a frozen pause button.
  *
  * Repeat cycles `off → all → one` through `cycleRepeat`; the "one" state
  * wears the dedicated `RepeatOneIcon` so the mode is readable at a glance.
  *
  * `phone` widens the whole row for thumbs: shuffle/repeat spread to the
- * edges, the skips grow to 56px targets and the FAB to 74px — the desktop
- * metrics stay exactly as they were.
+ * edges, the skips grow to 56px targets and the play circle to 74px — the
+ * desktop metrics stay exactly as they were.
  */
 export default function NPControls({ phone = false }: { phone?: boolean }) {
   const player = usePlayer();
-  // The FAB's accent glow is a painted effect — flat while low battery
-  // mode is on.
+  // The play circle's soft shadow is a painted effect — flat while low
+  // battery mode is on.
   const effectsEnabled = useEffectsEnabled();
   // Shuffle / repeat icons are line art on the sheet — the `accent-fg`
   // tokens below are ThemeContext's readable accent, which keeps them
@@ -75,15 +77,14 @@ export default function NPControls({ phone = false }: { phone?: boolean }) {
         onClick={player.togglePlay}
         className={cn(
           phone ? 'mx-1 size-[74px]' : 'mx-2 size-[66px]',
+          '!bg-body !text-bg',
           '![transition:transform_160ms_cubic-bezier(.2,.8,.2,1),box-shadow_160ms_ease]',
           'hover:[transform:scale(1.06)]',
           effectsEnabled &&
-            'hover:![box-shadow:0_14px_32px_color-mix(in_srgb,var(--app-accent)_55%,transparent)]',
+            'hover:![box-shadow:0_14px_32px_rgba(0,0,0,0.35)]',
         )}
         style={{
-          boxShadow: effectsEnabled
-            ? `0 10px 26px ${alpha('var(--app-accent)', 0.42)}`
-            : 'none',
+          boxShadow: effectsEnabled ? '0 10px 26px rgba(0,0,0,0.28)' : 'none',
         }}
       >
         {player.buffering ? (

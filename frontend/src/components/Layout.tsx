@@ -1,14 +1,14 @@
-import { useEffect, useRef, useSyncExternalStore } from 'react';
-import type { ComponentType } from 'react';
+import { useEffect, useMemo, useRef, useState, useSyncExternalStore, type ComponentType, type CSSProperties, type FormEvent } from 'react';
 import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 
+import { apiGet } from '../api';
 import { useIsDesktop } from '../hooks';
 import { usePlayer } from '../player/PlayerContext';
+import { loadSearchHistory, rememberSearch } from '../utils/searchHistory';
+import { mergeSuggestionEntries, suggestionTextOf, type SuggestionEntry } from '../utils/searchSuggestions';
 import SmartDownloadWatcher from '../offline/smartDownload';
 import { useArtworkBackground, useEffectsEnabled } from '../settings/store';
-import { useTheme as useAppTheme } from '../theme/ThemeContext';
 import { clearNotice, getDownloadsSnapshot, subscribeDownloads } from '../utils/downloadsStore';
-import { alpha } from '../utils/color';
 import { cn } from '../utils/cn';
 import AmbientBackground from './AmbientBackground';
 import MiniPlayer from './MiniPlayer';
@@ -16,6 +16,8 @@ import PlayerSheet from './PlayerSheet';
 import type { SvgIconProps } from './SvgIcon';
 import { Alert, Snackbar } from './ui';
 import {
+  GitHubIcon,
+  HistoryIcon,
   HomeIcon,
   LibraryIcon,
   QueueListIcon,
@@ -23,7 +25,7 @@ import {
   SettingsIcon,
 } from './icons';
 
-/** One entry of the primary navigation (side drawer and bottom bar). */
+/** One entry of the primary navigation. */
 interface NavItem {
   label: string;
   path: string;
@@ -38,95 +40,400 @@ const NAV_ITEMS: NavItem[] = [
   { label: 'Settings', path: '/settings', icon: SettingsIcon },
 ];
 
-/** Section-title typography (MUI h6: 1.25rem/1.6/700, tightened tracking). */
-const TITLE_CLS = 'm-0 text-xl font-extrabold leading-[1.6] tracking-[-0.02em]';
+/** Phone bottom navigation: everything except Queue (the header keeps it). */
+const BOTTOM_NAV_ITEMS: NavItem[] = NAV_ITEMS.filter((item) => item.path !== '/queue');
 
-/** The app logo (green tile + note), served from `frontend/public/`. */
-const LOGO_SRC = `${import.meta.env.BASE_URL}logo.png`;
+/** Header bar height below the status-bar inset (the hero pulls up by this). */
+const HEADER_PX = 64;
+
+/** Height of the phone bottom navigation bar (safe-area padding extra). */
+const BOTTOM_NAV_PX = 56;
+
+/** The app logo (SVG master in `frontend/public/`; PNG renders ship alongside). */
+const LOGO_SRC = `${import.meta.env.BASE_URL}logo.svg`;
+
+/** The upstream repository, linked from the bottom of the sidebar. */
+const REPO_URL = 'https://github.com/z44d/carmen';
+
+/** Circular dark-glass header button (Queue). */
+function GlassIconButton({
+  label,
+  onClick,
+  children,
+  className,
+}: {
+  label: string;
+  onClick: () => void;
+  children: React.ReactNode;
+  className?: string;
+}) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      className={cn(
+        'glass-pill grid size-11 shrink-0 place-items-center rounded-full shadow-glass transition hover:brightness-125 focus-visible:outline-2 focus-visible:outline-white active:scale-[0.94]',
+        className,
+      )}
+    >
+      {children}
+    </button>
+  );
+}
 
 /**
- * Desktop navigation: a compact floating card pinned to the left edge and
- * centred vertically (`fixed left-4 top-1/2 -translate-y-1/2`). Icons only
- * by default — hovering an individual tab expands *that row* to reveal its
- * label (`max-w-0 → max-w-[120px]`, `transition-all duration-300`) and the
- * card grows with it; leaving collapses it again.
- *
- * Color logic: the active tab wears the app accent — via `text-accent`, so
- * it is the *adaptive* accent whenever that setting is on (`--app-accent`
- * tracks the playing artwork) — plus a soft accent glow; hovering an
- * inactive tab colours icon and label with the same accent. Glass follows
- * the same effect switch as every other surface — low battery mode paints
- * solid paper, no blur.
+ * Floating app header: a transparent overlay row (no solid bar, no
+ * wordmark) — the wide glass search pill in the middle, and the circular
+ * glass Queue button on the right on phones only. The search pill
+ * takes ⌘K / Ctrl+K focus and Enter navigates to the search page.
+ * Typing opens a glass suggestions dropdown under the pill (server
+ * suggestions plus matching recent searches, keyboard-navigable);
+ * on /search, typing debounced-updates the URL so results run live
+ * while the header — outside `<Outlet/>` — keeps focus. The pill
+ * itself is visually unchanged, and the dropdown is absolutely
+ * positioned, so opening it never moves the layout.
+ * Every other section lives in the bottom navigation (phone) or the
+ * permanent sidebar (desktop).
  */
-function FloatingNav() {
+function AppHeader() {
+  const navigate = useNavigate();
   const location = useLocation();
-  // Glass only while the ambient tint can bleed through: low battery
-  // mode paints the solid paper colour instead (no backdrop-filter).
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const [term, setTerm] = useState('');
+  const [suggestions, setSuggestions] = useState<string[]>([]);
+  const [history, setHistory] = useState<string[]>(() => loadSearchHistory());
+  const [dropdownOpen, setDropdownOpen] = useState(false);
+  const [activeIndex, setActiveIndex] = useState(-1);
+  const closeTimerRef = useRef<number | undefined>(undefined);
+  const onSearchPage = location.pathname === '/search';
+
+  // Keep the pill in sync with an arrived search (deep link / artist
+  // jump). Guard: while the pill is focused and the user has already
+  // typed past the URL query, the typed text wins — the debounced URL
+  // update below catches up with it instead of clobbering it.
+  useEffect(() => {
+    if (location.pathname !== '/search') return;
+    const query = new URLSearchParams(location.search).get('query') || '';
+    setTerm((current) => {
+      if (
+        document.activeElement === inputRef.current &&
+        query &&
+        current.startsWith(query) &&
+        current.length > query.length
+      ) {
+        return current;
+      }
+      return query;
+    });
+  }, [location.pathname, location.search]);
+
+  // ⌘K / Ctrl+K focuses the pill from anywhere in the app.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if ((event.metaKey || event.ctrlKey) && event.key.toLowerCase() === 'k') {
+        event.preventDefault();
+        inputRef.current?.focus();
+        inputRef.current?.select();
+      }
+    };
+    document.addEventListener('keydown', onKey);
+    return () => document.removeEventListener('keydown', onKey);
+  }, []);
+
+  // Debounced server suggestions for the typed term.
+  useEffect(() => {
+    const trimmed = term.trim();
+    if (!trimmed) {
+      setSuggestions([]);
+      setActiveIndex(-1);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => {
+      apiGet('/search/suggestions', { query: trimmed })
+        .then((payload) => {
+          const list = Array.isArray(payload)
+            ? payload.map((entry: unknown) => suggestionTextOf(entry)).filter(Boolean)
+            : [];
+          setSuggestions(list);
+        })
+        .catch(() => setSuggestions([]));
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [term]);
+
+  // On /search, typing debounced-updates the URL (replace) so the
+  // URL-driven results run live while the header keeps focus. Off
+  // /search, typing only feeds the dropdown; Enter/selection navigates.
+  useEffect(() => {
+    if (!onSearchPage) return undefined;
+    const trimmed = term.trim();
+    const timer = window.setTimeout(() => {
+      const current = new URLSearchParams(location.search).get('query') || '';
+      if (trimmed === current) return;
+      const next = new URLSearchParams(location.search);
+      if (trimmed) next.set('query', trimmed);
+      else next.delete('query');
+      navigate({ pathname: '/search', search: next.toString() }, { replace: true });
+    }, 220);
+    return () => window.clearTimeout(timer);
+  }, [term, onSearchPage, location.search, navigate]);
+
+  const entries: SuggestionEntry[] = useMemo(
+    () => mergeSuggestionEntries(history, suggestions, term),
+    [history, suggestions, term],
+  );
+
+  const select = (text: string) => {
+    const query = text.trim();
+    if (!query) return;
+    setTerm(query);
+    setHistory(rememberSearch(query));
+    setDropdownOpen(false);
+    setActiveIndex(-1);
+    navigate(`/search?query=${encodeURIComponent(query)}`);
+    inputRef.current?.blur();
+  };
+
+  const submit = (event?: FormEvent) => {
+    event?.preventDefault();
+    const query = term.trim();
+    setDropdownOpen(false);
+    setActiveIndex(-1);
+    if (query) setHistory(rememberSearch(query));
+    navigate(query ? `/search?query=${encodeURIComponent(query)}` : '/search');
+    inputRef.current?.blur();
+  };
+
+  const closeSoon = () => {
+    window.clearTimeout(closeTimerRef.current);
+    closeTimerRef.current = window.setTimeout(() => setDropdownOpen(false), 150);
+  };
+
+  return (
+    <header className="pointer-events-none fixed inset-x-0 top-0 z-[1100] md:left-[72px]">
+      {/* readability gradient over the hero backdrop — the pills carry
+          their own glass, this only keeps the top edge legible */}
+      <div
+        aria-hidden
+        className="absolute inset-0 bg-gradient-to-b from-black/45 to-transparent"
+      />
+      <div
+        className="relative flex h-16 items-center gap-2 px-3 sm:gap-2.5 sm:px-4"
+        style={{ paddingTop: 'var(--sat)', height: `calc(${HEADER_PX}px + var(--sat))` }}
+      >
+        <form
+          onSubmit={submit}
+          role="search"
+          className="pointer-events-auto relative min-w-0 flex-1 md:mx-auto md:max-w-[560px]"
+        >
+          <div className="glass-pill flex h-11 items-center gap-2 rounded-full px-3.5 shadow-glass transition focus-within:border-white/40">
+            <SearchIcon fontSize="small" className="shrink-0 opacity-80" />
+            <input
+              ref={inputRef}
+              type="search"
+              value={term}
+              onChange={(event) => {
+                setTerm(event.target.value);
+                setDropdownOpen(true);
+                setActiveIndex(-1);
+              }}
+              onFocus={() => {
+                window.clearTimeout(closeTimerRef.current);
+                setHistory(loadSearchHistory());
+                setDropdownOpen(true);
+              }}
+              onBlur={closeSoon}
+              onKeyDown={(event) => {
+                if (event.key === 'ArrowDown') {
+                  event.preventDefault();
+                  if (!entries.length) return;
+                  setDropdownOpen(true);
+                  setActiveIndex((index) => (index + 1) % entries.length);
+                } else if (event.key === 'ArrowUp') {
+                  event.preventDefault();
+                  if (!entries.length) return;
+                  setDropdownOpen(true);
+                  setActiveIndex((index) => (index - 1 + entries.length) % entries.length);
+                } else if (event.key === 'Enter' && activeIndex >= 0 && entries[activeIndex]) {
+                  event.preventDefault();
+                  select(entries[activeIndex].text);
+                } else if (event.key === 'Escape') {
+                  setDropdownOpen(false);
+                  setActiveIndex(-1);
+                }
+              }}
+              placeholder="Search songs, albums, artists…"
+              aria-label="Search songs, albums, artists"
+              role="combobox"
+              aria-expanded={dropdownOpen && entries.length > 0}
+              aria-controls="header-search-suggestions"
+              aria-activedescendant={
+                activeIndex >= 0 ? `header-suggestion-${activeIndex}` : undefined
+              }
+              aria-autocomplete="list"
+              className="min-w-0 flex-1 bg-transparent text-sm text-white outline-none"
+            />
+            <kbd className="hidden shrink-0 items-center rounded-md border border-white/25 px-1.5 py-0.5 text-[11px] font-semibold leading-none text-white/80 sm:flex">
+              ⌘K
+            </kbd>
+          </div>
+          {dropdownOpen && entries.length > 0 && (
+            <div
+              id="header-search-suggestions"
+              role="listbox"
+              aria-label="Search suggestions"
+              className="glass-pill absolute left-0 right-0 top-full z-[1300] mt-2 max-h-[60vh] overflow-y-auto rounded-[20px] shadow-glass"
+            >
+              <ul className="m-0 list-none p-1.5">
+                {entries.map((entry, index) => (
+                  <li
+                    key={`${entry.kind}:${entry.text}`}
+                    id={`header-suggestion-${index}`}
+                    role="option"
+                    aria-selected={index === activeIndex}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => select(entry.text)}
+                    className={cn(
+                      'flex cursor-pointer items-center gap-2.5 rounded-[14px] px-3 py-2.5 text-sm text-white transition hover:bg-white/10',
+                      index === activeIndex && 'bg-white/10',
+                    )}
+                  >
+                    {entry.kind === 'history' ? (
+                      <HistoryIcon fontSize="small" className="shrink-0 opacity-80" />
+                    ) : (
+                      <SearchIcon fontSize="small" className="shrink-0 opacity-80" />
+                    )}
+                    <span className="min-w-0 flex-1 truncate">{entry.text}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </form>
+        <div className="pointer-events-auto flex shrink-0 items-center">
+          {/* Phones only: Queue lives in the sidebar on desktop. */}
+          <GlassIconButton label="Queue" onClick={() => navigate('/queue')} className="md:hidden">
+            <QueueListIcon />
+          </GlassIconButton>
+        </div>
+      </div>
+    </header>
+  );
+}
+
+/**
+ * Phone bottom navigation: Home / Search / Library / Settings, evenly
+ * spread, glass, clearing the home-indicator safe area. Queue stays in
+ * the header — four items is the whole bar.
+ */
+function BottomNav() {
+  const location = useLocation();
   const effectsEnabled = useEffectsEnabled();
-  const { resolved, accentInUse } = useAppTheme();
-  // A white accent painted straight onto the light card would be white on
-  // white — the same fallback the bottom bar uses further down.
-  const whiteOnLight = resolved === 'light' && accentInUse.toLowerCase() === '#ffffff';
   return (
     <nav
       aria-label="Primary"
       className={cn(
-        'fixed left-4 top-1/2 z-[1200] flex w-fit max-w-[236px] -translate-y-1/2 flex-col gap-1',
-        'rounded-2xl border border-line p-2',
+        'fixed inset-x-0 bottom-0 z-[1200] border-t border-line shadow-glass md:hidden',
+        effectsEnabled ? 'bg-surface/86' : 'bg-surface',
       )}
       style={{
-        backgroundColor: !effectsEnabled
-          ? 'var(--app-paper)'
-          : resolved === 'dark'
-            ? 'rgba(18,23,20,0.86)'
-            : 'rgba(255,255,255,0.86)',
-        backdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-        WebkitBackdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-        boxShadow: effectsEnabled ? 'var(--shadow-glass)' : 'none',
+        backdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        paddingBottom: 'env(safe-area-inset-bottom)',
       }}
     >
-      {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
-        const active = location.pathname === path;
-        return (
-          <NavLink
-            key={path}
-            to={path}
-            title={label}
-            aria-current={active ? 'page' : undefined}
-            className={cn(
-              'group flex items-center gap-3 rounded-xl p-3 no-underline',
-              'transition-all duration-300 ease-out',
-              'focus-visible:outline-2 focus-visible:outline-accent',
-              // `text-accent` resolves through `--app-accent`, which the
-              // theme context keeps pointing at the *effective* accent —
-              // stored or adaptive — so the highlight repaints the moment
-              // the artwork color changes.
-              active
-                ? whiteOnLight
-                  ? 'bg-hover text-body'
-                  : 'bg-accent/10 text-accent'
-                : 'text-muted hover:bg-hover hover:text-accent',
-            )}
-            style={
-              active && effectsEnabled && !whiteOnLight
-                ? { boxShadow: `0 0 18px ${alpha('var(--app-accent)', 0.3)}` }
-                : undefined
-            }
-          >
-            <Icon className="shrink-0" />
-            {/* label reveal: 0 → 120px on row hover, hidden again on leave */}
-            <span
+      <div className="grid grid-cols-4" style={{ height: BOTTOM_NAV_PX }}>
+        {BOTTOM_NAV_ITEMS.map(({ label, path, icon: Icon }) => {
+          const active = location.pathname === path;
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              aria-current={active ? 'page' : undefined}
               className={cn(
-                'max-w-0 overflow-hidden whitespace-nowrap text-sm font-semibold',
-                'opacity-0 transition-all duration-300 group-hover:max-w-[120px] group-hover:opacity-100',
+                'flex flex-col items-center justify-center gap-0.5 no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                active ? 'text-accent-fg' : 'text-muted hover:text-body',
               )}
             >
-              {label}
-            </span>
-          </NavLink>
-        );
-      })}
+              <Icon fontSize="small" className="shrink-0" />
+              <span className="text-[11px] font-semibold leading-none">{label}</span>
+            </NavLink>
+          );
+        })}
+      </div>
     </nav>
+  );
+}
+
+/**
+ * Permanent desktop sidebar: an icon-only rail — the logo, the five
+ * sections as icon buttons, and the GitHub link at the bottom. Full
+ * height, fixed 72px width, glass — the content column shifts right by
+ * its width (see `Layout`). Labels stay available to assistive tech and
+ * as hover tooltips; nothing else on desktop shows section text.
+ */
+function Sidebar() {
+  const location = useLocation();
+  const effectsEnabled = useEffectsEnabled();
+  return (
+    <aside
+      aria-label="Primary"
+      className={cn(
+        'fixed bottom-0 left-0 top-0 z-[1200] hidden w-[72px] flex-col items-center border-r border-line shadow-glass md:flex',
+        effectsEnabled ? 'bg-surface/86' : 'bg-surface',
+      )}
+      style={{
+        backdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+        WebkitBackdropFilter: effectsEnabled ? 'blur(20px) saturate(1.6)' : 'none',
+      }}
+    >
+      <div className="flex items-center justify-center pb-2 pt-[max(20px,var(--sat))]">
+        <img
+          src={LOGO_SRC}
+          alt=""
+          aria-hidden="true"
+          draggable={false}
+          className="h-9 w-9 shrink-0 rounded-[11px]"
+        />
+      </div>
+      <nav aria-label="Primary" className="flex flex-col items-center gap-1 pt-3">
+        {NAV_ITEMS.map(({ label, path, icon: Icon }) => {
+          const active = location.pathname === path;
+          return (
+            <NavLink
+              key={path}
+              to={path}
+              aria-label={label}
+              aria-current={active ? 'page' : undefined}
+              title={label}
+              className={cn(
+                'flex h-12 w-12 items-center justify-center rounded-full text-[15px] font-semibold no-underline transition-colors focus-visible:outline-2 focus-visible:outline-accent',
+                active
+                  ? 'bg-accent/15 text-accent-fg'
+                  : 'text-body hover:bg-hover',
+              )}
+            >
+              <Icon className="shrink-0" />
+              <span className="sr-only">{label}</span>
+            </NavLink>
+          );
+        })}
+      </nav>
+      <div className="mt-auto flex flex-col items-center gap-3 pb-[max(20px,env(safe-area-inset-bottom))] pt-4">
+        <a
+          href={REPO_URL}
+          target="_blank"
+          rel="noreferrer"
+          aria-label="Carmen on GitHub"
+          title="Carmen on GitHub"
+          className="flex h-12 w-12 items-center justify-center rounded-full border-t border-line text-muted no-underline transition-colors hover:text-body focus-visible:outline-2 focus-visible:outline-accent"
+        >
+          <GitHubIcon fontSize="small" className="shrink-0" />
+        </a>
+      </div>
+    </aside>
   );
 }
 
@@ -162,12 +469,10 @@ function NoticeSnackbars() {
   );
 }
 
-/** App shell: navigation, docked mini player, full player and snackbars. */
+/** App shell: floating header, sidebar / bottom nav, docked mini player, full player, snackbars. */
 export default function Layout() {
-  const appTheme = useAppTheme();
   const player = usePlayer();
   const location = useLocation();
-  const navigate = useNavigate();
   const isDesktop = useIsDesktop();
   const showMini = Boolean(player.current);
   // Low battery mode: no ambient artwork layer, no glass surfaces —
@@ -175,21 +480,19 @@ export default function Layout() {
   // additionally has its own Settings choice (artwork background).
   const effectsEnabled = useEffectsEnabled();
   const artworkBackground = useArtworkBackground();
-  // A white accent painted straight onto the light bar would be white on
-  // white, so the selected label falls back to the plain text colour there.
-  const whiteAccentOnLightBar =
-    appTheme.resolved === 'light' && appTheme.accentInUse.toLowerCase() === '#ffffff';
 
-  const navHeight = 56;
-  const bottomOffset = isDesktop
-    ? showMini
-      ? 'calc(env(safe-area-inset-bottom) + 16px)'
-      : '0px'
-    : `calc(${navHeight}px + env(safe-area-inset-bottom) + ${showMini ? 12 : 6}px)`;
+  // The mini player docks above the phone bottom nav (nav height + a
+  // finger's gap, past the home-indicator inset); on desktop it keeps
+  // its old 16px float.
+  const bottomOffset = showMini
+    ? `calc(env(safe-area-inset-bottom) + ${isDesktop ? 16 : BOTTOM_NAV_PX + 12}px)`
+    : '0px';
 
+  // Content reserves room for the mini player and, on phones, the
+  // bottom nav under it — nothing scrolls underneath either bar.
   const contentPaddingBottom = isDesktop
     ? `calc(${showMini ? 92 : 24}px + env(safe-area-inset-bottom))`
-    : `calc(${navHeight}px + env(safe-area-inset-bottom) + ${showMini ? 84 : 20}px)`;
+    : `calc(${showMini ? 140 : BOTTOM_NAV_PX + 20}px + env(safe-area-inset-bottom))`;
 
   // Every navigation starts at the top. `<main>` is the app's only scroller,
   // so it keeps its position across routes — without this, opening Queue,
@@ -207,105 +510,42 @@ export default function Layout() {
   return (
     // Fixed-height app window: the root never scrolls (styles.css locks
     // html/body/#root), only `<main>` below does — no rubber-banding, no
-    // horizontal document overflow, header and nav pinned by the column.
-    <div className="flex h-dvh overflow-hidden">
+    // horizontal document overflow, header pinned as an overlay.
+    // `--app-header` is the clearance every page clears and the home hero
+    // pulls back up by, so its backdrop reaches the viewport top.
+    <div
+      className="flex h-dvh overflow-hidden"
+      style={{ '--app-header': `calc(var(--sat) + ${HEADER_PX}px)` } as CSSProperties}
+    >
       {/* artwork driven ambient tint (painted behind every surface) —
           low battery mode and the Settings choice skip it entirely */}
       {effectsEnabled && artworkBackground && <AmbientBackground />}
 
-      {isDesktop && <FloatingNav />}
+      <AppHeader />
+      <Sidebar />
+      <BottomNav />
 
-      {/* md+: the floating nav card sits over the left edge, so the whole
-          content column (header included) clears it with a left inset —
-          everything else stays full-bleed below the breakpoint */}
-      <div className="flex min-w-0 flex-1 flex-col md:pl-[84px]">
-        {/* pinned by the flex column, not by `sticky`: the scroll starts at
-            `<main>` below, so the header can never scroll away */}
-        <header
-          className="relative z-[1100] border-b border-line"
-          style={{
-            // Status-bar clearance, owned here (and nowhere else) so the
-            // header's wash paints *under* the status bar instead of
-            // leaving a bare band above it. `--sat` is 0px wherever the
-            // window is not edge-to-edge, so desktop/iOS are untouched.
-            paddingTop: 'var(--sat)',
-            backdropFilter: effectsEnabled ? 'blur(12px)' : 'none',
-            backgroundColor: !effectsEnabled
-              ? 'var(--app-bg)'
-              : appTheme.resolved === 'dark'
-                ? 'rgba(10,13,11,0.72)'
-                : 'rgba(246,247,246,0.78)',
-          }}
-        >
-          <div className="flex min-h-14 items-center gap-2.5 px-4 md:min-h-16">
-            <img
-              src={LOGO_SRC}
-              alt=""
-              aria-hidden="true"
-              draggable={false}
-              className="h-7 w-7 shrink-0 rounded-[9px] md:h-8 md:w-8 md:rounded-[10px]"
-            />
-            <h6 className={TITLE_CLS}>
-              {isDesktop
-                ? NAV_ITEMS.find((item) => item.path === location.pathname)?.label || 'Carmen'
-                : 'Carmen'}
-            </h6>
-          </div>
-        </header>
-
+      {/* The content column shifts right by the sidebar width on
+          desktop (the sidebar itself is fixed); the home hero's negative
+          top margin is untouched by the horizontal shift. */}
+      <div className="flex min-w-0 flex-1 flex-col md:pl-[72px]">
         {/* the app's single vertical scroller — pages lay out inside it;
-            `id="app-main"` lets HomePage's pull-to-refresh read its position */}
+            `id="app-main"` lets HomePage's pull-to-refresh read its position.
+            Top padding clears the floating header; the home hero cancels
+            exactly this amount with a negative margin (see HomePage). */}
         <main
           id="app-main"
           ref={scrollerRef}
           className="min-h-0 flex-1 overflow-y-auto overflow-x-hidden overscroll-contain"
-          style={{ paddingBottom: contentPaddingBottom }}
+          style={{ paddingTop: 'var(--app-header)', paddingBottom: contentPaddingBottom }}
         >
           <Outlet />
         </main>
       </div>
 
-      {/* the docked bar would sit under the desktop player drawer, so it
+      {/* the docked bar would sit under the desktop player sheet, so it
           steps aside while the player is open */}
       {!(isDesktop && player.sheetOpen) && <MiniPlayer bottomOffset={bottomOffset} />}
-
-      {!isDesktop && (
-        <nav
-          className="fixed inset-x-0 bottom-0 z-[1100] flex"
-          style={{
-            height: `calc(${navHeight}px + env(safe-area-inset-bottom))`,
-            paddingBottom: 'env(safe-area-inset-bottom)',
-            borderTop: '1px solid var(--app-divider)',
-            backgroundColor: !effectsEnabled
-              ? 'var(--app-paper)'
-              : appTheme.resolved === 'dark'
-                ? 'rgba(18,23,20,0.9)'
-                : 'rgba(255,255,255,0.9)',
-            backdropFilter: effectsEnabled ? 'blur(16px)' : 'none',
-          }}
-        >
-          {NAV_ITEMS.map(({ label, path, icon: Icon }) => (
-            <button
-              key={path}
-              type="button"
-              onClick={() => navigate(path)}
-              className={cn(
-                'flex min-w-0 flex-1 flex-col items-center justify-center gap-1 px-1',
-                'text-xs font-medium transition-colors',
-                'focus-visible:outline-2 focus-visible:outline-accent',
-                location.pathname === path
-                  ? whiteAccentOnLightBar
-                    ? 'text-body'
-                    : 'text-accent'
-                  : 'text-muted',
-              )}
-            >
-              <Icon />
-              <span className="max-w-full truncate">{label}</span>
-            </button>
-          ))}
-        </nav>
-      )}
 
       <PlayerSheet />
       <NoticeSnackbars />

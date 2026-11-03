@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512">
+  <!-- Carmen logo master. The shipped PNGs (logo.png, favicon.png,
+       apple-touch-icon.png) are rasterized from this same geometry. -->
+  <rect x="0" y="0" width="512" height="512" rx="116" fill="#0b0b0d"/>
+  <rect x="2" y="2" width="508" height="508" rx="114" fill="none" stroke="#ffffff" stroke-opacity="0.12" stroke-width="2"/>
+  <path d="M 355 366 A 148 148 0 1 1 355 146" fill="none" stroke="#ffffff" stroke-width="54"/>
+  <polygon points="218,178 218,334 352,256" fill="#ffffff"/>
+</svg>

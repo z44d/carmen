@@ -4,6 +4,7 @@ from contextlib import suppress
 from functools import partial
 
 from fastapi import APIRouter, HTTPException
+from pydantic import BaseModel
 
 from .. import state
 from ..cache import cached
@@ -24,6 +25,7 @@ from ..core import (
     get_lyrics,
     get_mood_categories,
     get_mood_playlists,
+    get_provider_lyrics,
     get_related,
     get_signatureTimestamp,
     get_song,
@@ -34,6 +36,7 @@ from ..core import (
     get_user,
     get_user_playlists,
     get_user_videos,
+    translate_lyrics,
 )
 from ..filters import (
     MAX_DURATION_SECONDS,
@@ -56,6 +59,40 @@ def _guard_duration(result, video_id: str):
             detail=DurationLimitExceeded(video_id, seconds).args[0],
         )
     return result
+
+
+def _chain_provider_ids() -> set:
+    """Ids of the new lyrics chain; empty when the package is unavailable."""
+    try:
+        from ..lyrics import PROVIDER_IDS
+    except Exception:  # noqa: BLE001
+        return set()
+    return set(PROVIDER_IDS)
+
+
+def _parse_id_list(value: str | None) -> list[str] | None:
+    """Comma-separated query value -> id list (``None`` when absent/blank)."""
+    if value is None:
+        return None
+    ids = [part.strip() for part in value.split(",")]
+    ids = [part for part in ids if part]
+    return ids or None
+
+
+def _validate_chain_ids(ids: list[str] | None, param: str) -> None:
+    """400 on any id outside the chain registry (same style as ``track``)."""
+    if not ids:
+        return
+    known = _chain_provider_ids()
+    if not known:
+        return  # registry unavailable — the core treats unknowns as default
+    unknown = [part for part in ids if part not in known]
+    if unknown:
+        raise HTTPException(
+            status_code=400,
+            detail=f"unknown lyrics provider {unknown[0]!r} "
+            f"(expected one of: {', '.join(sorted(known))})",
+        )
 
 
 
@@ -335,8 +372,19 @@ async def song(videoId: str, signatureTimestamp: int | None = None):
     response_description="Full track payload: metadata, artwork, genre and lyrics",
 )
 @sanitized
-@cached("track", ttl=604800, id_arg="videoId", extra_args=("provider",))
-async def track(videoId: str, provider: str | None = None):
+@cached(
+    "track",
+    ttl=604800,
+    id_arg="videoId",
+    extra_args=("provider", "lyricsOrder", "lyricsEnabled"),
+)
+async def track(
+    videoId: str,
+    provider: str | None = None,
+    lyricsOrder: str | None = None,
+    lyricsEnabled: str | None = None,
+    paxsenixKey: str | None = None,
+):
     """
     Returns everything the player needs about a track in one call.
 
@@ -346,20 +394,50 @@ async def track(videoId: str, provider: str | None = None):
 
     - **videoId**: video ID of the song
     - **provider**: force a lyrics source — one of ``lrclib``, ``musixmatch``,
-      ``netease``, ``megalobiz`` or ``genius``. Omit it (or pass ``auto``) to
-      keep the default resolution chain.
+      ``netease``, ``megalobiz`` or ``genius`` (legacy syncedlyrics keys),
+      or a new chain id (``betterlyrics``, ``youlyplus``, ``kugou``,
+      ``simpmusic``, ``unison``, ``paxsenix-apple-music``,
+      ``paxsenix-spotify``, ``paxsenix-musixmatch``). Omit it (or pass
+      ``auto``) to keep the default resolution chain.
+    - **lyricsOrder**: comma-separated chain provider ids, in the order to
+      consult them (default: the registry order).
+    - **lyricsEnabled**: comma-separated chain provider ids to consult
+      (default: all).
+    - **paxsenixKey**: Paxsenix API key for the gated providers. It is
+      never logged and never part of any cache key.
     """
     if provider in (None, "", "auto"):
         provider = None
-    elif provider not in LYRICS_PROVIDERS:
-        raise HTTPException(
-            status_code=400,
-            detail=f"unknown lyrics provider {provider!r} "
-            f"(expected one of: auto, {', '.join(LYRICS_PROVIDERS)})",
-        )
+    else:
+        chain_ids = _chain_provider_ids()
+        if (
+            provider not in LYRICS_PROVIDERS
+            and chain_ids
+            and provider not in chain_ids
+        ):
+            raise HTTPException(
+                status_code=400,
+                detail=f"unknown lyrics provider {provider!r} "
+                f"(expected one of: auto, {', '.join(LYRICS_PROVIDERS)}, "
+                f"{', '.join(sorted(chain_ids))})",
+            )
+    order = _parse_id_list(lyricsOrder)
+    _validate_chain_ids(order, "lyricsOrder")
+    enabled = _parse_id_list(lyricsEnabled)
+    _validate_chain_ids(enabled, "lyricsEnabled")
     loop = asyncio.get_running_loop()
     try:
-        return await loop.run_in_executor(executor, partial(get_track, videoId, provider))
+        return await loop.run_in_executor(
+            executor,
+            partial(
+                get_track,
+                videoId,
+                provider=provider,
+                lyrics_order=order,
+                lyrics_enabled=set(enabled) if enabled else None,
+                paxsenix_key=paxsenixKey,
+            ),
+        )
     except DurationLimitExceeded as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
@@ -601,6 +679,157 @@ async def song_related(browseId: str):
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, partial(get_song_related, browseId))
+
+
+class LyricsTranslateRequest(BaseModel):
+    text: str
+    target: str
+
+
+@cached(
+    "lyrics_providers",
+    ttl=604800,
+    id_arg="videoId",
+    extra_args=("title", "artist", "album", "duration", "lyricsOrder", "lyricsEnabled"),
+)
+async def _cached_provider_lyrics(
+    videoId: str,
+    title: str,
+    artist: str,
+    album: str,
+    duration: int | None,
+    lyricsOrder: str | None,
+    lyricsEnabled: str | None,
+):
+    """Cached picker payload; used only when no Paxsenix key is supplied."""
+    order = _parse_id_list(lyricsOrder)
+    enabled = _parse_id_list(lyricsEnabled)
+    loop = asyncio.get_running_loop()
+    return await loop.run_in_executor(
+        executor,
+        partial(
+            get_provider_lyrics,
+            videoId,
+            title,
+            artist,
+            album,
+            duration,
+            order,
+            set(enabled) if enabled else None,
+            None,
+        ),
+    )
+
+
+@router.get(
+    "/lyrics/providers",
+    summary="Get Lyrics From Every Provider",
+    response_description="Per-provider parsed lyrics for the lyrics picker",
+)
+@sanitized
+async def lyrics_providers(
+    videoId: str = "",
+    title: str = "",
+    artist: str = "",
+    album: str = "",
+    duration: int | None = None,
+    lyricsOrder: str | None = None,
+    lyricsEnabled: str | None = None,
+    paxsenixKey: str | None = None,
+):
+    """
+    Returns every chain provider's parsed lyrics for a track, so the
+    client can offer a lyrics picker.
+
+    Each result carries the provider id and display name, whether the
+    provider is available for this request, and its parsed synced /
+    unsynced lyrics (null when that provider has none). Results follow
+    the requested order, deduplicated on identical lyrics.
+
+    The response is cached for a week — but only when no ``paxsenixKey``
+    is supplied. When a key is supplied, caching is bypassed entirely
+    (the key must never be part of any cache key).
+
+    - **videoId**: YouTube video ID (needed by SimpMusic / Unison)
+    - **title** / **artist** / **album**: track metadata for searching
+    - **duration**: track length in seconds
+    - **lyricsOrder** / **lyricsEnabled**: comma-separated chain ids
+    - **paxsenixKey**: Paxsenix API key; never logged, never cached
+    """
+    order = _parse_id_list(lyricsOrder)
+    _validate_chain_ids(order, "lyricsOrder")
+    enabled = _parse_id_list(lyricsEnabled)
+    _validate_chain_ids(enabled, "lyricsEnabled")
+    if paxsenixKey:
+        loop = asyncio.get_running_loop()
+        return await loop.run_in_executor(
+            executor,
+            partial(
+                get_provider_lyrics,
+                videoId,
+                title,
+                artist,
+                album,
+                duration,
+                order,
+                set(enabled) if enabled else None,
+                paxsenixKey,
+            ),
+        )
+    return await _cached_provider_lyrics(
+        videoId=videoId,
+        title=title,
+        artist=artist,
+        album=album,
+        duration=duration,
+        lyricsOrder=lyricsOrder,
+        lyricsEnabled=lyricsEnabled,
+    )
+
+
+@router.post(
+    "/lyrics/translate",
+    summary="Translate Lyrics",
+    response_description="Translated lyrics text",
+)
+@sanitized
+async def lyrics_translate(body: LyricsTranslateRequest):
+    """
+    Translate a lyrics text into another language.
+
+    Only ever called on an explicit user action — never part of the
+    default lyrics chain. ``target`` is a 2-3 letter language code
+    (``en``, ``ar``, …) or one of the alias names from the Android use
+    case (``HEBREW``, ``BURMESE``, …).
+
+    - **text**: lyrics text to translate (lines are translated as segments)
+    - **target**: target language code or alias name
+    """
+    if not body.text.strip():
+        raise HTTPException(status_code=400, detail="text must not be empty")
+    try:
+        from ..lyrics.translate import resolve_language_code
+    except Exception:  # noqa: BLE001 — degraded: bare-code validation only
+        resolve_language_code = None
+    if resolve_language_code is not None:
+        code = resolve_language_code(body.target)
+    else:
+        candidate = body.target.strip().lower()
+        code = candidate if 2 <= len(candidate) <= 3 and candidate.isalpha() else None
+    if code is None:
+        raise HTTPException(
+            status_code=400, detail=f"unsupported language {body.target!r}"
+        )
+    loop = asyncio.get_running_loop()
+    try:
+        translated = await loop.run_in_executor(
+            executor, partial(translate_lyrics, body.text, body.target)
+        )
+    except Exception as exc:  # noqa: BLE001 — translation service failure
+        raise HTTPException(
+            status_code=502, detail=f"translation failed: {exc}"
+        ) from exc
+    return {"translatedText": translated}
 
 
 @router.get(

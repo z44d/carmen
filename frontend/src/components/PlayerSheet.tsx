@@ -6,6 +6,7 @@ import NPControls from "./NPControls";
 import NPFavorite from "./NPFavorite";
 import NPQueue from "./NPQueue";
 import NPScrubber from "./NPScrubber";
+import VolumeSlider from "./VolumeSlider";
 import PlayerMenu from "./PlayerMenu";
 import RelatedTab from "./RelatedTab";
 import { useNavigate } from "react-router-dom";
@@ -78,9 +79,9 @@ const TAB_CLASS = 'min-h-[50px] min-w-0 !font-semibold';
  * Large / Very large.
  */
 const COVER_MAXW: Record<CoverSize, string> = {
-  default: 'max-w-[min(86vw,392px,44vh)] sm:max-w-[min(60vw,340px)] md:max-w-[min(100%,440px)]',
-  large: 'max-w-[min(88vw,440px,48vh)] sm:max-w-[min(62vw,384px)] md:max-w-[min(100%,500px)]',
-  veryLarge: 'max-w-[min(90vw,488px,52vh)] sm:max-w-[min(64vw,428px)] md:max-w-[min(100%,560px)]',
+  default: 'max-w-[min(86vw,392px,max(200px,calc(100dvh-430px)))] sm:max-w-[min(60vw,340px)] md:max-w-[min(100%,440px)]',
+  large: 'max-w-[min(88vw,440px,max(220px,calc(100dvh-410px)))] sm:max-w-[min(62vw,384px)] md:max-w-[min(100%,500px)]',
+  veryLarge: 'max-w-[min(90vw,488px,max(240px,calc(100dvh-390px)))] sm:max-w-[min(64vw,428px)] md:max-w-[min(100%,560px)]',
 };
 
 /**
@@ -512,10 +513,10 @@ export default function PlayerSheet() {
   );
 
   /**
-   * The cover — a sharp, square thumbnail centred in its column. The
-   * blurred circular halo that used to bleed out from behind it is gone;
-   * the sheet's backdrop (and, on desktop, the motion loop) carries the
-   * colour instead.
+   * The cover — a large square tile (iPhone Music: ~20px radius, soft
+   * shadow) centred in its column. The blurred circular halo that used
+   * to bleed out from behind it is gone; the sheet's backdrop (and, on
+   * desktop, the motion loop) carries the colour instead.
    */
   const artworkBox = (
     <div className={cn('relative mx-auto w-full', COVER_MAXW[coverSize])}>
@@ -528,8 +529,9 @@ export default function PlayerSheet() {
           zIndex: 1,
           width: '100%',
           aspectRatio: '1 / 1',
-          borderRadius: 42,
-          boxShadow: 'var(--shadow-elev-10)',
+          borderRadius: 20,
+          border: '1px solid var(--app-divider)',
+          boxShadow: '0 24px 48px rgba(0,0,0,0.35)',
         }}
       />
       {/* "Cover" placement: the motion loop plays *inside* the tile, on top
@@ -547,7 +549,7 @@ export default function PlayerSheet() {
           onCanPlay={() => setMotionReady(true)}
           onError={() => setMotionReady(false)}
           aria-hidden
-          className="pointer-events-none absolute inset-0 z-[2] h-full w-full rounded-[42px] object-cover"
+          className="pointer-events-none absolute inset-0 z-[2] h-full w-full rounded-[20px] object-cover"
           style={{ opacity: motionReady ? 1 : 0, transition: 'opacity 400ms ease' }}
         />
       )}
@@ -563,14 +565,13 @@ export default function PlayerSheet() {
 
   /**
    * Title · explicit badge · artist · album — the metadata both layouts
-   * share; only the title's weight differs (hero `h5` on the phone, the
-   * `h6` that has always sat beside the desktop columns). The `md:`
-   * alignment rule is safe in the shared markup because the desktop body
-   * only ever renders at ≥900px.
+   * share, left-aligned on both (Apple Music aligns left); only the
+   * title's weight differs (hero `h5` on the phone, the `h6` that has
+   * always sat beside the desktop columns).
    */
   const titleMeta = (titleVariant: 'h5' | 'h6') => (
     <>
-      <div className="flex flex-row items-center justify-center gap-[6px] md:justify-start">
+      <div className="flex flex-row items-center justify-start gap-[6px] text-left">
         <MarqueeText text={track.title} variant={titleVariant} />
         {track.isExplicit && (
           <ExplicitIcon
@@ -602,7 +603,7 @@ export default function PlayerSheet() {
   );
 
   const titleBlock = (
-    <div className="mt-4 flex flex-row items-center gap-2 text-center md:mt-2 md:text-left">
+    <div className="mt-4 flex flex-row items-center gap-2 text-left md:mt-2">
       <div className="min-w-0 flex-1">{titleMeta('h6')}</div>
     </div>
   );
@@ -613,7 +614,7 @@ export default function PlayerSheet() {
    * the thing it favourites instead of hiding in the row below.
    */
   const mobileTitleBlock = (
-    <div className="mt-5 flex items-center gap-1 text-center">
+    <div className="mt-4 flex items-center gap-1 text-left">
       <div className="min-w-0 flex-1">{titleMeta('h5')}</div>
       <NPFavorite track={track} />
     </div>
@@ -661,7 +662,7 @@ export default function PlayerSheet() {
    * thumb's arc.
    */
   const mobileActionBar = (
-    <div className="mx-auto mt-4 flex w-full max-w-[440px] items-stretch overflow-hidden rounded-full border border-line bg-surface/60 backdrop-blur-xl">
+    <div className="mx-auto mt-3 flex w-full max-w-[440px] items-stretch overflow-hidden rounded-full border border-line bg-surface/60 backdrop-blur-xl">
       {[
         { label: 'Lyrics', Icon: LyricsIcon, tab: LYRICS_TAB },
         { label: 'Queue', Icon: QueueMusicIcon, tab: QUEUE_TAB },
@@ -726,7 +727,7 @@ export default function PlayerSheet() {
           className={TAB_CLASS}
         />
       </Tabs>
-      <div className="relative mt-2 min-h-[220px] flex-1 overflow-hidden rounded-[28px]">
+      <div className="relative mt-2 min-h-[220px] flex-1 overflow-hidden rounded-[20px] border border-line">
         {/* The animated cover, fitted edge-to-edge behind the lyrics under a
             theme-coloured scrim, so every line stays readable on top of
             moving pixels. Paints when the placement resolves to the lyrics
@@ -767,7 +768,19 @@ export default function PlayerSheet() {
               synced={lyrics.synced}
               unsynced={lyrics.unsynced}
               source={lyrics.source}
+              provider={lyrics.provider}
               loading={meta === null}
+              track={
+                track
+                  ? {
+                      videoId: track.videoId,
+                      title: track.title,
+                      artist: track.artist,
+                      album: track.albumName,
+                      durationSeconds: track.durationSeconds ?? undefined,
+                    }
+                  : null
+              }
             />
           </div>
         )}
@@ -815,30 +828,34 @@ export default function PlayerSheet() {
     // the scrubber thumb used to move the whole page under the finger.
     // `overflow-y-auto` alone also computes `overflow-x` to `auto`, which
     // is what let the sheet pan sideways — both axes are locked now. The
-    // layout is sized to fit (the cover caps itself at 44vh), so on a
-    // short screen the bottom simply clips instead of scrolling; the
-    // bottom padding clears the home indicator where the OS reports one
+    // layout is sized to fit (the cover caps itself to a dynamic-viewport
+    // budget that leaves room for the chrome below it), so the action
+    // bar stays on screen even on a short phone; the bottom padding
+    // clears the home indicator where the OS reports one
     <div className="relative z-[1] flex min-h-0 flex-1 flex-col overflow-hidden px-5 pb-[max(env(safe-area-inset-bottom),1rem)] pt-1">
       {artworkBox}
       {mobileTitleBlock}
       {errorAlert}
       {scrubber}
       <NPControls phone />
+      <div className="mt-3">
+        <VolumeSlider />
+      </div>
       {mobileActionBar}
     </div>
   );
 
   // ── Phone: a panel has taken the screen over ───────────────────────────
   const mobilePanel = (
-    <div className="relative z-[1] flex min-h-0 flex-1 flex-col px-4 py-2">
+    <div className="relative z-[1] flex min-h-0 flex-1 flex-col px-4 pb-[max(env(safe-area-inset-bottom),0.5rem)] pt-2">
       {/* compact now-playing card: the song stays visible above the panel,
           and the down arrow folds everything back to the main view */}
-      <div className="mb-1 flex shrink-0 flex-row items-center gap-3 rounded-[28px] border border-line bg-surface px-[10px] py-2">
+      <div className="mb-1 flex shrink-0 flex-row items-center gap-3 rounded-2xl border border-line bg-surface px-[10px] py-2">
         <Artwork
           src={artwork}
           alt=""
           iconSize={20}
-          style={{ width: 44, height: 44, borderRadius: 21, flexShrink: 0 }}
+          style={{ width: 44, height: 44, borderRadius: 12, flexShrink: 0 }}
         />
         <div className="min-w-0 flex-1">
           <MarqueeText text={track.title} variant="subtitle2" />
@@ -877,6 +894,9 @@ export default function PlayerSheet() {
         {errorAlert}
         {scrubber}
         <NPControls />
+        <div className="mt-3">
+          <VolumeSlider />
+        </div>
         {secondaryRow}
         <div className="mt-3 flex min-h-[240px] flex-1 flex-col">
           {panel}
@@ -917,7 +937,19 @@ export default function PlayerSheet() {
       synced={lyrics.synced}
       unsynced={lyrics.unsynced}
       source={lyrics.source}
+      provider={lyrics.provider}
       loading={meta === null}
+      track={
+        track
+          ? {
+              videoId: track.videoId,
+              title: track.title,
+              artist: track.artist,
+              album: track.albumName,
+              durationSeconds: track.durationSeconds ?? undefined,
+            }
+          : null
+      }
     />
   );
 
@@ -963,11 +995,11 @@ export default function PlayerSheet() {
         // dialog wrapper is a padded flexbox, and a `w-screen` item would
         // otherwise shrink into its padding, leaving a dim strip of the page
         // showing through on both sides.
-        '!h-screen !w-screen !max-h-none !max-w-none !rounded-none !bg-bg shrink-0',
+        '!h-[100dvh] !w-screen !max-h-none !max-w-none !rounded-none !bg-bg shrink-0',
         // Desktop sizes the card down to a panel — unless full screen is on,
         // where it takes the whole viewport (same as the phone sheet).
         !fullScreen &&
-          'md:!h-[min(760px,calc(100vh_-_64px))] md:!w-[min(1120px,calc(100vw_-_64px))] md:!rounded-card',
+          'md:!h-[min(760px,calc(100vh_-_64px))] md:!w-[min(1120px,calc(100vw_-_64px))] md:!rounded-[20px]',
       )}
     >
       <div

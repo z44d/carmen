@@ -6,7 +6,8 @@ import { useSettings } from '../settings/store';
 import { useTheme } from '../theme/ThemeContext';
 import type { LyricLine, LyricWord, LyricsSize } from '../types/models';
 import { cn } from '../utils/cn';
-import { activeLineIndexAt as activeIndexAt, karaokeWordsOf } from '../utils/lyrics';
+import { activeLineIndexAt as activeIndexAt, isRtlText, karaokeWordsOf } from '../utils/lyrics';
+import { MusicNoteIcon } from './icons';
 
 /**
  * Synced lyrics engine — rAF glide + windowed rows, zero renders per tick.
@@ -64,6 +65,28 @@ const LYRICS_TEXT: Record<LyricsSize, string> = {
   veryLarge: 'text-[1.58rem] md:text-[1.66rem]',
 };
 
+/** Supplementary (romanization / translation) size — 0.55× the line size. */
+const SUPPLEMENTARY_TEXT: Record<LyricsSize, string> = {
+  default: 'text-[0.62rem] md:text-[0.65rem]',
+  large: 'text-[0.74rem] md:text-[0.78rem]',
+  veryLarge: 'text-[0.88rem] md:text-[0.93rem]',
+};
+
+/**
+ * Distance-based dimming, ported from Android's LyricsV2: the neighbour
+ * lines stay readable, lines further away fade toward the background,
+ * and past lines fade exactly like future ones at the same distance.
+ * `-1` means no active line yet (intro) — everything stays readable.
+ */
+function opacityForDistance(distance: number): number {
+  if (distance < 0) return 0.7;
+  if (distance === 0) return 1;
+  if (distance === 1) return 0.52;
+  if (distance === 2) return 0.3;
+  if (distance === 3) return 0.18;
+  return 0.1;
+}
+
 /**
  * The engine's playhead subscriber: it forwards each tick and renders
  * nothing at all, so the engine above stays render-free between lines.
@@ -109,6 +132,27 @@ function KaraokeWords({ words, accentFg }: { words: LyricWord[]; accentFg: strin
   );
 }
 
+/**
+ * Words of a line that has already been sung — static, no playhead
+ * subscription: every word wears the accent, exactly as the karaoke
+ * leaf leaves them once the playhead has passed. Only the active row
+ * subscribes (see `KaraokeWords`); past rows repaint only when the
+ * active line moves, so the engine's zero-renders-per-tick promise
+ * holds for every other row.
+ */
+function SungWords({ words, accentFg }: { words: LyricWord[]; accentFg: string }) {
+  return (
+    <>
+      {words.map((word, index) => (
+        <span key={`${word.startMs}-${index}`} style={{ color: accentFg }}>
+          {word.text}
+          {index + 1 < words.length ? ' ' : ''}
+        </span>
+      ))}
+    </>
+  );
+}
+
 interface SyncedLyricsProps {
   /** Timestamped lines of the playing song (never empty — checked by caller). */
   lines: LyricLine[];
@@ -119,25 +163,40 @@ interface SyncedLyricsProps {
 /**
  * One lyric line.  Memoised: a playhead tick, a scroll frame or a
  * neighbouring highlight leaves it untouched — it repaints only when its
- * own `active`/`past` flags change, which is the whole point of the engine.
+ * own `active`/`distance` flags change, which is the whole point of the
+ * engine.
+ *
+ * Rendering follows Android's LyricsV2: centred lines (agent `v2` lines
+ * end-aligned, explicit `v1` lines start-aligned), the active line
+ * larger/bolder with word-by-word highlight when word stamps exist,
+ * provider romanization above the line and translation below it at
+ * 0.55× size, background vocals on their own smaller row, RTL lines
+ * rendered `dir="auto"` and right-aligned, and instrumental breaks as a
+ * distinct centred music-note row.
  */
 const LyricRow = memo(function LyricRow({
   line,
   active,
   past,
+  distance,
   accentFg,
   onSelect,
   textClass,
+  supplementaryClass,
   karaoke,
   nextStartMs,
 }: {
   line: LyricLine;
   active: boolean;
   past: boolean;
+  /** Lines away from the active line (`-1` = no active line yet). */
+  distance: number;
   accentFg: string;
   onSelect: (timeMs: number) => void;
   /** Font-size utility from `LYRICS_TEXT`, decided by the parent once. */
   textClass: string;
+  /** Font-size utility from `SUPPLEMENTARY_TEXT`, decided by the parent once. */
+  supplementaryClass: string;
   /** Word-by-word karaoke on (Settings → Word-by-word karaoke). */
   karaoke: boolean;
   /** The next line's timestamp — the end boundary for estimated word slots. */
@@ -146,24 +205,80 @@ const LyricRow = memo(function LyricRow({
   const handleClick = useCallback(() => onSelect(line.timeMs), [onSelect, line.timeMs]);
   // Derived once per line change, never per tick — the karaoke leaf below
   // only *reads* the clock against these stamps.
-  const words = useMemo(
+  const timedWords = useMemo(
     () => (karaoke ? karaokeWordsOf(line, nextStartMs) : null),
     [karaoke, line, nextStartMs],
   );
+  // Main vs background vocals split exactly as Android splits them:
+  // background words ride their own smaller row under the main line.
+  const mainWords = useMemo(
+    () => timedWords?.filter((word) => !word.isBackground) ?? null,
+    [timedWords],
+  );
+  const backgroundWords = useMemo(() => {
+    if (timedWords) return timedWords.filter((word) => word.isBackground);
+    return line.words?.filter((word) => word.isBackground) ?? [];
+  }, [timedWords, line.words]);
+  const hasMainWords = (mainWords?.length ?? 0) > 0;
+
+  const romanized =
+    line.romanizedText?.trim() ||
+    (line.romanizedWords?.length ? line.romanizedWords.join(' ').trim() : '') ||
+    undefined;
+  const translation = line.translation?.trim() || undefined;
+  const displayText = line.text || '';
+  const rtl = isRtlText(displayText || romanized || '');
+  // Agent alignment (Android): `v2` → end, explicit `v1` → start,
+  // anything else (incl. no agent) → centred. RTL lines right-align.
+  const agent = line.agent?.toLowerCase();
+  const align = rtl ? 'right' : agent === 'v2' ? 'right' : agent === 'v1' ? 'left' : 'center';
+  const isAllBackground =
+    (line.words?.length ?? 0) > 0 && line.words?.every((word) => word.isBackground || !word.text.trim());
+
+  if (line.isInstrumental) {
+    return (
+      <button
+        type="button"
+        aria-current={active || undefined}
+        aria-label="Instrumental break"
+        onClick={handleClick}
+        className={cn(
+          'm-0 block w-full cursor-pointer rounded-[28px] border-none bg-transparent p-[10px]',
+          'text-center text-body',
+          '[&:focus:not(:focus-visible)]:outline-none focus-visible:outline-offset-2 focus-visible:[outline:2px_solid_var(--lyric-ring)]',
+        )}
+        style={
+          {
+            lineHeight: 1.8,
+            color: active ? accentFg : undefined,
+            opacity: opacityForDistance(distance),
+            transform: active ? 'scale(1.05)' : 'scale(1)',
+            transformOrigin: 'center',
+            transition:
+              'color 200ms ease, opacity 200ms ease, transform 240ms cubic-bezier(.2,.8,.2,1)',
+            '--lyric-ring': accentFg,
+          } as CSSProperties
+        }
+      >
+        <span className="inline-flex items-center gap-2">
+          <MusicNoteIcon className={active ? undefined : 'opacity-70'} />
+          <span className="text-sm font-semibold tracking-wide">Instrumental</span>
+        </span>
+      </button>
+    );
+  }
+
   return (
     <button
       type="button"
       aria-current={active || undefined}
       onClick={handleClick}
+      dir="auto"
       className={cn(
         'm-0 block w-full cursor-pointer rounded-[28px] border-none bg-transparent p-[10px]',
-        'text-center text-body',
+        'text-body',
         textClass,
-        active
-          ? 'opacity-100 hover:opacity-100'
-          : past
-            ? 'opacity-[0.42] hover:opacity-50'
-            : 'opacity-70 hover:opacity-[0.85]',
+        align === 'right' ? 'text-right' : align === 'left' ? 'text-left' : 'text-center',
         // a line the reader tapped keeps :hover (and focus) on touch
         // screens — the highlight has to follow the song, not the
         // finger, so only focus-visible still draws a ring
@@ -176,7 +291,9 @@ const LyricRow = memo(function LyricRow({
           // as the active line changes weight — nothing reflows mid-song
           lineHeight: 1.8,
           fontWeight: active ? 700 : 600,
+          fontStyle: isAllBackground ? 'italic' : undefined,
           color: active ? accentFg : undefined,
+          opacity: opacityForDistance(distance),
           // a transform never touches layout, so the highlight cannot
           // shift the lines around it while the song plays
           transform: active ? 'scale(1.05)' : 'scale(1)',
@@ -187,10 +304,50 @@ const LyricRow = memo(function LyricRow({
         } as CSSProperties
       }
     >
-      {active && words?.length ? (
-        <KaraokeWords words={words} accentFg={accentFg} />
-      ) : (
-        (line.text || '♪')
+      {romanized && (
+        <span
+          className={cn('mb-1 block font-normal', supplementaryClass)}
+          style={{ opacity: active ? 0.76 : 0.42 }}
+        >
+          {romanized}
+        </span>
+      )}
+      {hasMainWords ? (
+        active ? (
+          <KaraokeWords words={mainWords!} accentFg={accentFg} />
+        ) : past ? (
+          <SungWords words={mainWords!} accentFg={accentFg} />
+        ) : (
+          displayText || '♪'
+        )
+      ) : backgroundWords.length ? null : (
+        displayText || '♪'
+      )}
+      {backgroundWords.length > 0 && (
+        <span
+          className="mt-1 block font-normal italic"
+          style={{ fontSize: '0.65em', opacity: 0.85 }}
+        >
+          {karaoke ? (
+            active ? (
+              <KaraokeWords words={backgroundWords} accentFg={accentFg} />
+            ) : past ? (
+              <SungWords words={backgroundWords} accentFg={accentFg} />
+            ) : (
+              backgroundWords.map((word) => word.text).join('')
+            )
+          ) : (
+            backgroundWords.map((word) => word.text).join('')
+          )}
+        </span>
+      )}
+      {translation && (
+        <span
+          className={cn('mt-1 block font-normal', supplementaryClass)}
+          style={{ opacity: active ? 0.76 : 0.42 }}
+        >
+          {translation}
+        </span>
       )}
     </button>
   );
@@ -203,6 +360,8 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
   const scrollerRef = useRef<HTMLDivElement | null>(null);
   /** React mirror of the active line — the only state a tick can change. */
   const [activeIdx, setActiveIdx] = useState(-1);
+  /** The reader took over scrolling — the follow is parked (Resume shows). */
+  const [suspended, setSuspended] = useState(false);
 
   // Latest-ref pattern: child effects (the probe) run before this component's
   // own, so the payload must be readable during render, not in an effect.
@@ -272,6 +431,7 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
   /** Reader took over: stop following, come back after the grace period. */
   const suspend = useCallback(() => {
     suspendedRef.current = true;
+    setSuspended(true);
     if (rafRef.current !== null) {
       cancelAnimationFrame(rafRef.current);
       rafRef.current = null;
@@ -280,8 +440,20 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
     resumeTimerRef.current = window.setTimeout(() => {
       resumeTimerRef.current = null;
       suspendedRef.current = false;
+      setSuspended(false);
       glideToActive();
     }, RESUME_FOLLOW_MS);
+  }, [glideToActive]);
+
+  /** The reader asked to follow again right now (Resume button / tap). */
+  const resumeFollow = useCallback(() => {
+    suspendedRef.current = false;
+    setSuspended(false);
+    if (resumeTimerRef.current !== null) {
+      window.clearTimeout(resumeTimerRef.current);
+      resumeTimerRef.current = null;
+    }
+    glideToActive();
   }, [glideToActive]);
 
   /** The single funnel: a playhead tick or a payload change lands here. */
@@ -343,6 +515,7 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
       // The tap *is* the decision: cancel the suspension, seek, and glide to
       // the line right now — even when it is the line already playing.
       suspendedRef.current = false;
+      setSuspended(false);
       if (resumeTimerRef.current !== null) {
         window.clearTimeout(resumeTimerRef.current);
         resumeTimerRef.current = null;
@@ -405,7 +578,7 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
   const rows = virtualizer.getVirtualItems();
 
   return (
-    <>
+    <div className="relative flex min-h-0 flex-1 flex-col">
       <PlayheadProbe onTick={handleTick} />
       {/* `translateZ(0)` + will-change promote the scroller to its own
           compositor layer, so the eased scrollTop and the transform-positioned
@@ -442,9 +615,11 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
                   line={line}
                   active={row.index === activeIdx}
                   past={row.index < activeIdx}
+                  distance={activeIdx < 0 ? -1 : Math.abs(row.index - activeIdx)}
                   accentFg={accentFg}
                   onSelect={handleSelect}
                   textClass={LYRICS_TEXT[lyricsSize]}
+                  supplementaryClass={SUPPLEMENTARY_TEXT[lyricsSize]}
                   karaoke={karaokeWords}
                   nextStartMs={lines[row.index + 1]?.timeMs}
                 />
@@ -453,6 +628,16 @@ export default function SyncedLyrics({ lines, onSeek }: SyncedLyricsProps) {
           })}
         </div>
       </div>
-    </>
+      {/* The reader scrolled away — one tap returns to the sung line. */}
+      {suspended && activeIdx >= 0 && (
+        <button
+          type="button"
+          onClick={resumeFollow}
+          className="glass-pill absolute bottom-3 left-1/2 z-10 -translate-x-1/2 rounded-full px-4 py-1.5 text-sm font-semibold text-body shadow-glass transition hover:brightness-125 active:scale-[0.96]"
+        >
+          Resume
+        </button>
+      )}
+    </div>
   );
 }

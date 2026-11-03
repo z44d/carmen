@@ -113,17 +113,15 @@ export default function TrackRow({
         <ListItemButton
           onClick={() => player.playTrack(track, contextTracks)}
           className={cn(
-            'font-ui',
-            active
-              ? 'bg-[rgba(0,0,0,0.08)] dark:bg-[rgba(255,255,255,0.16)] dark:hover:bg-hover'
-              : 'bg-transparent',
+            'font-ui hover:bg-hover',
+            active ? 'bg-hover' : 'bg-transparent',
           )}
           style={{
             paddingTop: 6,
             paddingBottom: 6,
-            paddingLeft: 16,
+            paddingLeft: 12,
             paddingRight: 48,
-            borderRadius: 28,
+            borderRadius: 12,
           }}
         >
           {artwork ? (
@@ -133,7 +131,12 @@ export default function TrackRow({
                 alt=""
                 icon={MusicNoteIcon}
                 iconSize={22}
-                style={{ width: 44, height: 44, borderRadius: 21 }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  border: '1px solid var(--app-divider)',
+                }}
               />
             </ListItemIcon>
           ) : index !== null ? (
@@ -149,7 +152,12 @@ export default function TrackRow({
                 src={null}
                 icon={MusicNoteIcon}
                 iconSize={22}
-                style={{ width: 44, height: 44, borderRadius: 21 }}
+                style={{
+                  width: 44,
+                  height: 44,
+                  borderRadius: 12,
+                  border: '1px solid var(--app-divider)',
+                }}
               />
             </ListItemIcon>
           )}
@@ -211,7 +219,7 @@ export default function TrackRow({
       {/* MIGRATION: `unmountOnExit` dropped — the kit's framer Collapse
           already unmounts once its exit animation finishes. */}
       <Collapse in={detailsOpen} timeout="auto">
-        <div className="pb-3 pl-[72px] pr-2">
+        <div className="pb-3 pl-[60px] pr-2">
           <Divider className="mb-2" />
           <span className="text-xs leading-[1.4] text-muted">
             {[

@@ -2,7 +2,6 @@
  * Minimal API client for the FastAPI backend.
  */
 import { getSettingsSnapshot } from './settings/store';
-import type { LyricsProvider } from './types/models';
 
 const ENV_BASE = import.meta.env.VITE_API_BASE || 'https://api-carmen-v1.syr.qzz.io';
 
@@ -79,26 +78,59 @@ export function streamUrl(videoId: string): string {
  * `/browsing/track` already returns the lyrics alongside the rest of the track
  * data, so one call per song is enough; this cache makes flipping back to a
  * recently played song — or reopening the player — reuse that payload instead
- * of asking the server again. Keyed by video id + lyrics provider (a provider
- * change is a different answer), and failures are evicted so they retry.
+ * of asking the server again. Keyed by video id + lyrics chain preference
+ * (order, enabled set, pinned provider, and whether a Paxsenix key was
+ * supplied — the key itself is never part of the cache key), and failures
+ * are evicted so they retry.
  */
 const trackMetaCache = new Map<string, Promise<any>>();
 
-/** Enriched track metadata with the configured lyrics provider applied. */
+/** Lyrics chain preferences sent with a track fetch (Android model). */
+export interface LyricsFetchOptions {
+  /** Pin the chain to a single provider id for this song only. */
+  provider?: string;
+  /** Chain order (preference order) — sent as a comma list. */
+  order?: string[];
+  /** Enable map — only enabled ids are sent, in chain order. */
+  enabled?: Record<string, boolean>;
+  /**
+   * Paxsenix API key, sent only when set. Never logged, never stored
+   * server-side, and never included in the memo key.
+   */
+  paxsenixKey?: string;
+  signal?: AbortSignal;
+}
+
+/** Enriched track metadata with the configured lyrics chain applied. */
 export async function fetchTrackMeta(
   videoId: string,
-  lyricsProvider: LyricsProvider,
-  signal?: AbortSignal,
+  options: LyricsFetchOptions = {},
 ): Promise<any> {
-  const key = `${videoId}:${lyricsProvider || 'auto'}`;
+  const { provider, order, enabled, paxsenixKey, signal } = options;
+  // The key travels trimmed (a pasted key's stray whitespace must not
+  // silently disable the Paxsenix providers) and never enters the key.
+  const trimmedKey = paxsenixKey?.trim() || undefined;
+  const enabledIds = order
+    ? order.filter((id) => enabled?.[id] !== false)
+    : undefined;
+  const key = [
+    videoId,
+    provider || 'auto',
+    order?.join(',') ?? '',
+    enabledIds?.join(',') ?? '',
+    trimmedKey ? 'keyed' : '',
+  ].join(':');
   const cached = trackMetaCache.get(key);
   if (cached) return cached;
 
-  // `auto` is the server default — omit the query so cached entries shared
-  // between "Auto" and unset clients stay identical.
   const request = apiGet(
     `/browsing/track/${videoId}`,
-    lyricsProvider && lyricsProvider !== 'auto' ? { provider: lyricsProvider } : {},
+    {
+      ...(provider ? { provider } : {}),
+      ...(order?.length ? { lyricsOrder: order.join(',') } : {}),
+      ...(enabledIds?.length ? { lyricsEnabled: enabledIds.join(',') } : {}),
+      ...(trimmedKey ? { paxsenixKey: trimmedKey } : {}),
+    },
     signal,
   ).catch((error) => {
     trackMetaCache.delete(key); // never memo a failure — let it retry

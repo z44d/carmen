@@ -3,7 +3,6 @@ import { useRef, useState } from 'react';
 import { ProgressBar } from '../components/ui';
 import { useEffectsEnabled } from '../settings/store';
 import { usePlayhead } from '../player/PlayerContext';
-import { useTheme } from '../theme/ThemeContext';
 import { alpha } from '../utils/color';
 import { cn } from '../utils/cn';
 import { formatTime } from '../utils/format';
@@ -19,15 +18,12 @@ const STEP = 0.5;
  * Seek bar of the now-playing screen.
  *
  * A hairline rail that fattens under the pointer, the buffered range in a
- * muted tint and a glowing accent track — the thumb only shows up while the
- * bar is hovered, focused or dragged (the modern desktop player treatment
- * instead of a permanently visible slider dot).
- *
- * While a gesture is in flight the bar keeps a *tentative* position in
- * local state, so it never snaps back to the real playhead under the
- * finger; the seek is only sent when the gesture commits. Keyboard changes
- * (arrow / page / home / end keys) commit right away too, so the bar stays
- * fully keyboard operable.
+ * muted tint and a neutral body-colour fill — the thumb is always visible
+ * (iPhone style), slightly larger on touch. While a gesture is in flight
+ * the bar keeps a *tentative* position in local state, so it never snaps
+ * back to the real playhead under the finger; the seek is only sent when
+ * the gesture commits. Keyboard changes (arrow / page / home / end keys)
+ * commit right away too, so the bar stays fully keyboard operable.
  *
  * MIGRATION: MUI's `Slider` became a hand-built `role="slider"` div —
  * same pointer flow (press → drag → release commits, `step` rounding,
@@ -43,13 +39,9 @@ export default function NPScrubber({ onSeek }: NPScrubberProps) {
   // duration the audio element parses out of the m4a container.
   const { currentTime, duration, buffered } = usePlayhead();
   const [scrub, setScrub] = useState<number | null>(null);
-  // The glowing accent track is a painted effect — flat while high
+  // The fill's soft shadow is a painted effect — flat while high
   // performance mode is on.
   const effectsEnabled = useEffectsEnabled();
-  // The rail, glow and thumb ring are line art on the sheet surface — use the
-  // readable accent so a white high-performance accent stays visible in light
-  // mode (filled surfaces can keep `primary.main`).
-  const { accentFg } = useTheme();
 
   const sliderRef = useRef<HTMLDivElement>(null);
   // Mirrors MUI's press → drag → release cycle: the value under the finger
@@ -175,26 +167,24 @@ export default function NPScrubber({ onSeek }: NPScrubberProps) {
             onPointerCancel={handlePointerUp}
             onKeyDown={handleKeyDown}
           >
-            {/* played range — the glowing accent track */}
+            {/* played range — the neutral body-colour fill */}
             <div
               aria-hidden
               className={cn(
-                'seek-fill pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-[42px] bg-accent-fg pointer-coarse:h-1.5',
+                'seek-fill pointer-events-none absolute left-0 top-1/2 h-1 -translate-y-1/2 rounded-[42px] bg-body pointer-coarse:h-1.5',
                 !dragging && '[transition:width_150ms_cubic-bezier(0.4,0,0.2,1)]',
               )}
               style={{
                 width: `${progressPercent}%`,
                 boxShadow: effectsEnabled
-                  ? `0 0 10px ${alpha(accentFg, 0.55)}`
+                  ? `0 0 10px ${alpha('var(--app-text)', 0.35)}`
                   : 'none',
               }}
             />
-            {/* thumb: 12px dot, white fill, accent ring — hidden until the
-                bar is hovered, focused or dragged; on touch (no hover to
-                reveal it) it simply stays put */}
+            {/* thumb: 14px body-colour dot, always visible, larger on touch */}
             <div
               aria-hidden
-              className="seek-thumb pointer-events-none absolute top-1/2 h-3 w-3 -translate-x-1/2 -translate-y-1/2 scale-50 rounded-full border-[3px] border-accent-fg bg-surface opacity-0 shadow-none [transition:opacity_140ms_ease,scale_140ms_ease] pointer-coarse:scale-100 pointer-coarse:opacity-100 group-hover:scale-100 group-hover:opacity-100 group-focus-within:scale-100 group-focus-within:opacity-100"
+              className="seek-thumb pointer-events-none absolute top-1/2 size-[14px] -translate-x-1/2 -translate-y-1/2 rounded-full bg-body shadow-[0_1px_6px_rgba(0,0,0,0.45)]"
               style={{ left: `${progressPercent}%` }}
             />
           </div>

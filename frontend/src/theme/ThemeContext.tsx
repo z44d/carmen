@@ -10,6 +10,12 @@ import {
 
 import { updateSettings, useLowBatteryMode, useSettings } from '../settings/store';
 import { cssPalette, fontStack } from '../theme';
+import {
+  LOW_BATTERY_ACCENT,
+  resolveAccentContrast,
+  resolveAccentFg,
+  resolveAccentInUse,
+} from './accent';
 import type { FontId, ThemeMode } from '../types/models';
 
 /** What {@link useTheme} answers — one entry per theme engine setting. */
@@ -38,9 +44,9 @@ export interface ThemeContextValue {
   /**
    * Text/icon colour **on top of a filled accent surface** — the
    * `contrastText` MUI used to compute: white when the accent is dark
-   * enough (contrast ratio ≥ 3 against white), otherwise 87% black.  Never
-   * the accent itself, so a green play button wears a dark icon, not a
-   * green-on-green one.
+   * enough (contrast ratio ≥ 3 against white), otherwise 87% black. Never
+   * the accent itself, so a coloured play button wears a dark icon, not a
+   * colour-on-colour one.
    */
   accentContrast: string;
   /**
@@ -57,28 +63,6 @@ export interface ThemeContextValue {
   setFont: (font: FontId) => void;
   /** `mode` resolved against the system preference (`light` or `dark`). */
   resolved: 'light' | 'dark';
-}
-
-/**
- * Accent low battery mode pins the whole app to: no artwork theming,
- * no hue of its own (see Settings).
- */
-const LOW_BATTERY_ACCENT = '#ffffff';
-
-/**
- * Relative luminance of a `#rrggbb` colour (0 = black, 1 = white).
- * Used to decide whether an accent survives on a light surface — white does
- * not, and neither does the pale adaptive colour some covers produce.
- */
-function luminance(hex: string): number {
-  const match = /^#([0-9a-f]{6})$/i.exec(hex);
-  if (!match) return 1;
-  const value = parseInt(match[1], 16);
-  const channel = (shift: number) => {
-    const c = ((value >> shift) & 0xff) / 255;
-    return c <= 0.03928 ? c / 12.92 : ((c + 0.055) / 1.055) ** 2.4;
-  };
-  return 0.2126 * channel(16) + 0.7152 * channel(8) + 0.0722 * channel(0);
 }
 
 /**
@@ -157,25 +141,17 @@ export function ThemeProvider({ children }: { children: ReactNode }) {
   // Adaptive only wins while it is switched on *and* a cover has actually
   // been read; otherwise the accent chosen in Settings is what the app wears.
   // Low battery mode pins that to white, so neither ever shows.
-  const accentInUse = lowBatteryMode
-    ? LOW_BATTERY_ACCENT
-    : adaptiveAccent && adaptiveColor
-      ? adaptiveColor
-      : accent;
+  const accentInUse = resolveAccentInUse({ lowBatteryMode, adaptiveAccent, adaptiveColor, accent });
 
   // A white (or near-white) accent painted as text vanishes on the light
   // surface — fall back to the readable text colour in that one case.
-  const accentFg =
-    resolved === 'light' && luminance(accentInUse) > 0.85
-      ? '#12160f'
-      : accentInUse;
+  const accentFg = resolveAccentFg(resolved, accentInUse);
 
   // MUI's `contrastText`: white on the accent while the contrast ratio
   // against white clears 3 (i.e. the accent is dark enough), otherwise
   // 87% black — the ratio math matches `getContrastRatio` from
   // @mui/material so every filled surface keeps its old legibility.
-  const accentContrast =
-    1.05 / (luminance(accentInUse) + 0.05) >= 3 ? '#ffffff' : 'rgba(0,0,0,0.87)';
+  const accentContrast = resolveAccentContrast(accentInUse);
 
   useEffect(() => {
     const meta = document.querySelector('meta[name="theme-color"]');

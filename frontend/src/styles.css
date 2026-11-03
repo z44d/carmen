@@ -5,8 +5,8 @@
  * `data-theme="light|dark"` plus `--app-*` custom properties (accent,
  * accent-fg, font, palette).  The `@theme` block maps those onto Tailwind's
  * namespace, so `bg-surface`, `text-muted`, `border-line`, `font-ui` and
- * `bg-accent` track the Settings choices — accent included, which still
- * changes per track while adaptive accenting is on.
+ * `bg-accent` track the Settings choices — the accent token always
+ * resolves to the body text colour, so chrome stays neutral.
  */
 @import "tailwindcss";
 
@@ -23,7 +23,7 @@
   --breakpoint-xl: 1536px;
 
   /* Published by ThemeProvider — dynamic at runtime. */
-  --color-accent: var(--app-accent, #4caf50);
+  --color-accent: var(--app-accent, #fafafa);
   --color-accent-fg: var(--app-accent-fg, #ffffff);
   /* Text on top of a filled accent surface (MUI's contrastText). */
   --color-accent-contrast: var(--app-accent-contrast, #ffffff);
@@ -34,15 +34,22 @@
   --color-line: var(--app-divider, rgba(0, 0, 0, 0.09));
   --color-disabled: var(--app-text-disabled, rgba(0, 0, 0, 0.26));
   --color-action: var(--app-action-active, rgba(0, 0, 0, 0.54));
-  --color-success: var(--app-success, #2e7d32);
+  --color-success: var(--app-success, #fafafa);
   --color-hover: var(--app-hover, rgba(0, 0, 0, 0.04));
   --color-error: var(--app-error, #d32f2f);
   --font-ui: var(--app-font, "Alexandria", system-ui, sans-serif);
 
   /* Static design tokens of the Carmen identity (match `buildTheme`). */
-  --radius-card: 14px;
+  --radius-card: 12px;
   --radius-tile: 16px;
-  --shadow-glass: 0 12px 32px rgba(0, 0, 0, 0.16), 0 2px 8px rgba(0, 0, 0, 0.08);
+  --shadow-glass: 0 8px 24px rgba(0, 0, 0, 0.35), 0 2px 8px rgba(0, 0, 0, 0.2);
+
+  /* Chrome: the only yellow is the star glyph colour; rank numerals
+     are gold / silver / bronze, everything else stays monochrome. */
+  --color-star: #facc15;
+  --color-rank-gold: #facc15;
+  --color-rank-silver: #d1d5db;
+  --color-rank-bronze: #d97706;
 
   /* MUI's stock elevation table — call sites that said `boxShadow: n` keep
      the exact three-layer drops via `var(--shadow-elev-n)` (values copied
@@ -80,7 +87,7 @@
    * wash-backed surface that reaches the top edge: the shell header
    * (Layout `paddingTop: var(--sat)`) and the player sheet's handle strip
    * (PlayerSheet `pt-[max(10px,var(--sat))]`). The **bottom** inset is
-   * consumed piecemeal — the fixed bottom nav / mini player
+   * consumed piecemeal — the floating mini player
    * (Layout/MiniPlayer) and the player sheet
    * (`pb-[max(env(safe-area-inset-bottom),1rem)]`) already include it — so
    * a bottom pad here would stack double.
@@ -167,6 +174,56 @@
 }
 
 @layer components {
+  /*
+   * Dark glass pill — the floating header controls (hamburger, search,
+   * round icon buttons) and hero buttons that sit over artwork. Dark in
+   * both themes: the header floats over the hero backdrop, so a dark
+   * translucent pill with a hairline light border stays readable there.
+   * Low-battery mode drops the blur at the call site (see Layout).
+   */
+  .glass-pill {
+    background-color: rgba(17, 17, 17, 0.55);
+    border: 1px solid rgba(255, 255, 255, 0.16);
+    backdrop-filter: blur(16px) saturate(1.4);
+    -webkit-backdrop-filter: blur(16px) saturate(1.4);
+    color: #ffffff;
+  }
+  .glass-pill::placeholder,
+  .glass-pill input::placeholder {
+    color: rgba(255, 255, 255, 0.6);
+  }
+
+  /*
+   * Light theme glass: the dark translucent pill that floats over
+   * the hero in dark mode reads muddy and heavy over warm paper, so
+   * in light mode the same pill becomes light glass — warm-white,
+   * soft border, dark text — readable over artwork and over paper
+   * alike. Dark mode keeps the dark pill untouched.
+   */
+  [data-theme="light"] .glass-pill {
+    background-color: rgba(255, 253, 248, 0.82);
+    border-color: rgba(60, 45, 25, 0.16);
+    color: #1b1712;
+  }
+  [data-theme="light"] .glass-pill::placeholder,
+  [data-theme="light"] .glass-pill input::placeholder {
+    color: rgba(27, 23, 18, 0.68);
+  }
+  [data-theme="light"] .glass-pill:focus-within {
+    border-color: rgba(60, 45, 25, 0.4);
+  }
+
+  /* Horizontal peek row: snap + momentum scrolling, scrollbar hidden by
+     the global rule in @layer base. */
+  .peek-row {
+    scroll-snap-type: x proximity;
+    -webkit-overflow-scrolling: touch;
+    overscroll-behavior-x: contain;
+  }
+  .peek-row > * {
+    scroll-snap-align: start;
+  }
+
   /* MUI `Skeleton` — 11% of the text colour (its stock 0.11 alpha), pulse
      on the wave cadence. Utilities can still repaint it via `bg-*`. */
   .skeleton {
@@ -185,7 +242,7 @@
     inset-block: 0;
     left: 0;
     width: 40%;
-    background-color: var(--app-accent, #4caf50);
+    background-color: var(--app-accent, #fafafa);
     border-radius: inherit;
     animation: progress-slide 2.1s cubic-bezier(0.65, 0.8, 0.5, 0.9) infinite;
   }
@@ -238,4 +295,23 @@
       animation: none;
     }
   }
+}
+
+/*
+ * Light-theme-only overrides, unlayered so they win over the
+ * `@theme` defaults for the same custom properties. Dark mode is
+ * untouched: the heavy dark `--shadow-glass` stays exactly as it
+ * was, and `color-scheme` follows the resolved mode so native
+ * controls (scrollbars, date pickers, autofill) match.
+ */
+[data-theme="light"] {
+  color-scheme: light;
+  /* Soft warm shadow: floating chrome (mini player, dialogs,
+     bottom nav, header pills) lifts gently off warm paper instead
+     of casting the dark-mode drop shadow. */
+  --shadow-glass: 0 10px 30px rgba(93, 72, 48, 0.14), 0 2px 8px rgba(93, 72, 48, 0.08);
+}
+
+[data-theme="dark"] {
+  color-scheme: dark;
 }
