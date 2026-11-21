@@ -21,10 +21,17 @@ log = logging.getLogger(__name__)
 
 ytm: YTMusic = None
 
+# Optional egress proxy for YouTube only. Some datacenter IPs are refused the
+# YouTube Music catalogue ("not available in your area"), so the API client and
+# yt-dlp can be pointed at a proxy/VPN (e.g. ``socks5h://127.0.0.1:40000``).
+# Other upstreams (lyrics providers, artwork, …) keep using the host network.
+YTM_PROXY = os.environ.get("YTM_PROXY") or None
+
 
 def init_ytm(browser: str | Path):
     global ytm
-    ytm = YTMusic(str(browser))
+    proxies = {"http": YTM_PROXY, "https": YTM_PROXY} if YTM_PROXY else None
+    ytm = YTMusic(str(browser), proxies=proxies)
 
     return ytm
 
@@ -1463,6 +1470,8 @@ streaming_options = {
     "js_runtimes": {"deno": {}},
     "format": "bestaudio[ext=m4a]/bestaudio/best",
 }
+if YTM_PROXY:
+    streaming_options["proxy"] = YTM_PROXY
 
 _download_locks: dict[str, threading.Lock] = {}
 _download_guard = threading.Lock()

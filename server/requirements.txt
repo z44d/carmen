@@ -7,6 +7,7 @@ python-dotenv
 uvloop
 redis
 yt-dlp[default]
+pysocks
 # kurigram
 # No animated image errors on get_me() when bot start here. 
 # using this for now until new version of kurigram release.
