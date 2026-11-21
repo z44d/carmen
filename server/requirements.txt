@@ -8,6 +8,7 @@ uvloop
 redis
 yt-dlp[default]
 pysocks
+requests
 # kurigram
 # No animated image errors on get_me() when bot start here. 
 # using this for now until new version of kurigram release.

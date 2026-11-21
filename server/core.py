@@ -7,6 +7,7 @@ from typing import NamedTuple
 from urllib.parse import parse_qs, quote, unquote, urlparse
 from urllib.request import Request, urlopen
 
+import requests
 from ytmusicapi import YTMusic
 from ytmusicapi.parsers.browsing import parse_album
 
@@ -632,20 +633,6 @@ _BROWSER_UA = (
 )
 
 
-def _read_json(request: Request, timeout: int):
-    """Issue a request and decode its JSON body, returning None on any failure."""
-    try:
-        with urlopen(request, timeout=timeout) as response:
-            raw = response.read().decode("utf-8", "replace") or ""
-    except Exception:  # noqa: BLE001
-        return None
-    try:
-        payload = json.loads(raw)
-    except (ValueError, TypeError):
-        return None
-    return payload
-
-
 def _browse_mobile(browse_id: str) -> dict | None:
     """
     Ask YouTube for a lyrics page with a bare mobile innertube request.
@@ -661,18 +648,22 @@ def _browse_mobile(browse_id: str) -> dict | None:
     body = json.dumps(
         {"browseId": browse_id, "context": {"client": _MOBILE_CLIENT}}
     ).encode("utf-8")
-    request = Request(
-        _INNERTUBE_BROWSE,
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Origin": "https://music.youtube.com",
-            "Referer": "https://music.youtube.com/",
-            "User-Agent": _BROWSER_UA,
-        },
-        method="POST",
-    )
-    payload = _read_json(request, timeout=8)
+    try:
+        response = requests.post(
+            _INNERTUBE_BROWSE,
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Origin": "https://music.youtube.com",
+                "Referer": "https://music.youtube.com/",
+                "User-Agent": _BROWSER_UA,
+            },
+            timeout=8,
+            proxies={"http": YTM_PROXY, "https": YTM_PROXY} if YTM_PROXY else None,
+        )
+        payload = response.json()
+    except Exception:  # noqa: BLE001
+        return None
     return payload if isinstance(payload, dict) else None
 
 
